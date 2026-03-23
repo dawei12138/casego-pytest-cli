@@ -8,6 +8,6 @@ python -m build --sdist --wheel
 python -m venv .venv_pkgtest
 source .venv_pkgtest/bin/activate
 pip install dist/*.whl
-api2 --help
+casego --help
 
 echo "Package build and install verification completed."

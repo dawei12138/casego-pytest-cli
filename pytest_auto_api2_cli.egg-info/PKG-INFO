@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pytest-auto-api2-cli
-Version: 0.2.0
+Version: 0.2.1
 Summary: CLI for generating and running pytest-auto-api2 test cases.
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
@@ -23,10 +23,8 @@ Requires-Dist: xlwings==0.27.7
 
 本框架主要是基于 Python + pytest + allure + log + yaml + mysql + redis + 钉钉通知 + Jenkins 实现的接口自动化框架。
 
-* git地址: [https://gitee.com/yu_xiao_qi/pytest-auto-api2](https://gitee.com/yu_xiao_qi/pytest-auto-api2)
-* 项目参与者: 余少琪
-* 技术支持邮箱: 1603453211@qq.com
-* 个人博客地址:  [https://blog.csdn.net/weixin_43865008](https://blog.csdn.net/weixin_43865008)
+* 项目参与者: dawei
+* 技术支持邮箱: 2509291624@qq.com
 
 如果对您有帮助，请点亮 小星星 以表支持，谢谢
 
@@ -66,7 +64,6 @@ Requires-Dist: xlwings==0.27.7
 * 可以添加微信： being_chaoren, 添加微信会将你拉倒自动化交流群中，群内有很多热心的小伙伴，但是前提是希望你已经阅读了文档中的所有内容
 * 你也可以请作者为你解答，当然我不是免费的
 
-![img.png](Files/image/wechat.png)
 
 ## 目录结构
 
@@ -936,10 +933,4 @@ _框架内容会随着大家的反馈，持续更新！邮箱地址：1602343211
 * V2.0.0(2022-04-07)
   [重构] 新增多业务逻辑依赖处理，统一改成yaml文件中维护用例，无需编写代码，基于V1.0版本进行重构
 * [查看更多记录点此查看](https://gitee.com/yu_xiao_qi/pytest-auto-api2/wikis/Home)
-
-## 赞赏
-
-如果这个库有帮助到你并且你很想支持库的后续开发和维护，那么你可以扫描下方二维码随意打赏我，我将不胜感激
-
-![img_1.png](Files/image/img_1.png)  ![img_1.png](Files/image/weixin_pay.png)
 

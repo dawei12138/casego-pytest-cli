@@ -663,15 +663,31 @@ demo_banner_list_01:
 """
 
 
-def _cmd_init(args: argparse.Namespace) -> int:
-    target = Path(args.path).expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
+def _template_run_py() -> str:
+    return """#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-    if any(target.iterdir()) and not args.force:
-        raise FileExistsError(
-            f"Target directory is not empty: {target}\n"
-            "Use --force to overwrite template files."
+from pytest_auto_api2.cli import main as casego_main
+
+
+if __name__ == "__main__":
+    raise SystemExit(
+        casego_main(
+            [
+                "all",
+                "--project-root",
+                ".",
+                "--allure",
+                "--generate-report",
+            ]
         )
+    )
+"""
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    target = Path.cwd().resolve()
+    target.mkdir(parents=True, exist_ok=True)
 
     for name in ("common", "data", "test_case", "Files", "logs", "report"):
         (target / name).mkdir(parents=True, exist_ok=True)
@@ -679,6 +695,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     template_files = {
         target / "common" / "config.yaml": _template_config_yaml(),
         target / "pytest.ini": _template_pytest_ini(),
+        target / "run.py": _template_run_py(),
         target / "test_case" / "__init__.py": _template_test_case_init(),
         target / "test_case" / "conftest.py": _template_conftest(),
         target / "data" / "demo_banner.yaml": _template_sample_yaml(),
@@ -707,7 +724,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="api2",
+        prog="casego",
         description="Generate pytest cases from YAML and run API tests.",
     )
 
@@ -866,14 +883,9 @@ def _build_parser() -> argparse.ArgumentParser:
     all_parser.set_defaults(func=_cmd_all)
 
     init_parser = subparsers.add_parser(
-        "init",
-        help="Initialize a new api2 project scaffold in target directory.",
-    )
-    init_parser.add_argument(
-        "path",
-        nargs="?",
-        default=".",
-        help="Target directory for scaffold. Default: current directory",
+        "ini",
+        aliases=["init"],
+        help="Initialize project scaffold in current directory.",
     )
     init_parser.add_argument(
         "--force",
@@ -891,7 +903,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return int(args.func(args))
     except Exception as exc:
-        print(f"api2 command failed: {exc}", file=sys.stderr)
+        print(f"casego command failed: {exc}", file=sys.stderr)
         return 1
 
 

@@ -21,9 +21,9 @@ def test_parser_commands_are_registered():
     assert args_all.command == "all"
     assert args_all.func.__name__ == "_cmd_all"
 
-    args_init = parser.parse_args(["init"])
-    assert args_init.command == "init"
-    assert args_init.func.__name__ == "_cmd_init"
+    args_ini = parser.parse_args(["ini"])
+    assert args_ini.command == "ini"
+    assert args_ini.func.__name__ == "_cmd_init"
 
     args_validate = parser.parse_args(["validate"])
     assert args_validate.command == "validate"

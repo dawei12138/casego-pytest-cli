@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pytest-auto-api2-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "CLI for generating and running pytest-auto-api2 test cases."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-api2 = "pytest_auto_api2.cli:main"
+casego = "pytest_auto_api2.cli:main"
 
 [tool.setuptools]
 py-modules = ["cli", "run"]

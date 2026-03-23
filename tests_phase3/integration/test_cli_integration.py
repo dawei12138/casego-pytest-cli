@@ -24,8 +24,10 @@ def _last_nonempty_line(text: str) -> str:
 
 def test_init_and_gen_generate_namespaced_test(tmp_path):
     project_dir = tmp_path / "demo_project"
-    init_res = _run_cli("init", str(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
+    init_res = _run_cli("ini", cwd=project_dir)
     assert init_res.returncode == 0, init_res.stderr
+    assert (project_dir / "run.py").exists()
 
     gen_res = _run_cli("gen", "--project-root", str(project_dir))
     assert gen_res.returncode == 0, gen_res.stderr
@@ -39,7 +41,8 @@ def test_init_and_gen_generate_namespaced_test(tmp_path):
 
 def test_gen_and_run_with_custom_data_and_test_dir(tmp_path):
     project_dir = tmp_path / "custom_project"
-    init_res = _run_cli("init", str(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
+    init_res = _run_cli("ini", cwd=project_dir)
     assert init_res.returncode == 0, init_res.stderr
 
     custom_data = project_dir / "custom_cases"
@@ -89,7 +92,8 @@ def test_gen_and_run_with_custom_data_and_test_dir(tmp_path):
 
 def test_validate_json_output_for_valid_project(tmp_path):
     project_dir = tmp_path / "validate_project"
-    init_res = _run_cli("init", str(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
+    init_res = _run_cli("ini", cwd=project_dir)
     assert init_res.returncode == 0, init_res.stderr
 
     validate_res = _run_cli("validate", "--project-root", str(project_dir), "--json")
@@ -103,7 +107,8 @@ def test_validate_json_output_for_valid_project(tmp_path):
 
 def test_run_json_output_contains_summary(tmp_path):
     project_dir = tmp_path / "json_run_project"
-    init_res = _run_cli("init", str(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
+    init_res = _run_cli("ini", cwd=project_dir)
     assert init_res.returncode == 0, init_res.stderr
 
     gen_res = _run_cli("gen", "--project-root", str(project_dir))
@@ -149,7 +154,8 @@ def test_run_json_output_contains_summary(tmp_path):
 
 def test_gen_force_overwrites_when_real_time_update_disabled(tmp_path):
     project_dir = tmp_path / "force_gen_project"
-    init_res = _run_cli("init", str(project_dir))
+    project_dir.mkdir(parents=True, exist_ok=True)
+    init_res = _run_cli("ini", cwd=project_dir)
     assert init_res.returncode == 0, init_res.stderr
 
     config_path = project_dir / "common" / "config.yaml"

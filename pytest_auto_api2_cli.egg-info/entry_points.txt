@@ -1,2 +1,2 @@
 [console_scripts]
-api2 = pytest_auto_api2.cli:main
+casego = pytest_auto_api2.cli:main
