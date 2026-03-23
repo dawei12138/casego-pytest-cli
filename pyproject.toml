@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytest-auto-api2-cli"
+version = "0.2.0"
+description = "CLI for generating and running pytest-auto-api2 test cases."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "allure-pytest==2.13.5",
+    "colorlog==6.6.0",
+    "DingtalkChatbot==1.5.3",
+    "Faker==37.5.3",
+    "jsonpath==0.82.2",
+    "PyMySQL==1.1.1",
+    "pydantic==2.11.7",
+    "PyYAML==6.0.2",
+    "pytest==8.4.1",
+    "requests==2.32.5",
+    "requests-toolbelt==1.0.0",
+    "urllib3==2.5.0",
+    "xlwings==0.27.7",
+]
+
+[project.scripts]
+api2 = "pytest_auto_api2.cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "run"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["common*", "utils*", "test_case*", "pytest_auto_api2*"]

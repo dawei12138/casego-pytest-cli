@@ -1,0 +1,13 @@
+allure-pytest==2.13.5
+colorlog==6.6.0
+DingtalkChatbot==1.5.3
+Faker==37.5.3
+jsonpath==0.82.2
+PyMySQL==1.1.1
+pydantic==2.11.7
+PyYAML==6.0.2
+pytest==8.4.1
+requests==2.32.5
+requests-toolbelt==1.0.0
+urllib3==2.5.0
+xlwings==0.27.7
