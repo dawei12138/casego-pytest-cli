@@ -8,12 +8,12 @@ import allure
 import pytest
 import requests
 
-from common.setting import ensure_path_sep
-from utils.cache_process.cache_control import CacheHandler
-from utils.other_tools.allure_data.allure_tools import allure_step, allure_step_no
-from utils.other_tools.models import TestCase
-from utils.read_files_tools.clean_files import del_file
-from utils.requests_tool.request_control import cache_regular
+from pytest_auto_api2.common.setting import ensure_path_sep
+from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler
+from pytest_auto_api2.utils.other_tools.allure_data.allure_tools import allure_step, allure_step_no
+from pytest_auto_api2.utils.other_tools.models import TestCase
+from pytest_auto_api2.utils.read_files_tools.clean_files import del_file
+from pytest_auto_api2.utils.requests_tool.request_control import cache_regular
 
 
 @pytest.fixture(scope="session", autouse=False)

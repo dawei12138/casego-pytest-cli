@@ -1,6 +1,8 @@
 ﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import importlib
+import sys
 from pathlib import Path
 
 from pytest_auto_api2 import cli
@@ -111,6 +113,36 @@ def test_build_pytest_args_json_mode_uses_quiet(tmp_path):
     }
     pytest_args = cli._build_pytest_args(args, project)
     assert "-q" in pytest_args
+
+
+def test_runtime_imports_are_isolated_from_shadowed_top_level_packages(tmp_path, monkeypatch):
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("PYTEST_AUTO_API2_HOME", str(repo_root))
+    monkeypatch.setenv("PYTEST_AUTO_API2_CONFIG", str(repo_root / "common" / "config.yaml"))
+    monkeypatch.setenv("PYTEST_AUTO_API2_DATA_DIR", str(repo_root / "data"))
+    monkeypatch.setenv("PYTEST_AUTO_API2_TEST_DIR", str(repo_root / "test_case"))
+
+    shadow_root = tmp_path / "shadow"
+    (shadow_root / "utils").mkdir(parents=True)
+    (shadow_root / "utils" / "__init__.py").write_text("# shadow utils\n", encoding="utf-8")
+    (shadow_root / "common").mkdir(parents=True)
+    (shadow_root / "common" / "__init__.py").write_text("# shadow common\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(shadow_root))
+
+    for module_name in (
+        "common",
+        "utils",
+        "pytest_auto_api2.runtime.loader",
+        "pytest_auto_api2.runtime.api",
+    ):
+        sys.modules.pop(module_name, None)
+
+    loader_mod = importlib.import_module("pytest_auto_api2.runtime.loader")
+    api_mod = importlib.import_module("pytest_auto_api2.runtime.api")
+
+    assert hasattr(loader_mod, "build_case_cache")
+    assert hasattr(api_mod, "RequestControl")
+
 
 def test_gen_and_all_force_flags_are_available():
     parser = cli._build_parser()

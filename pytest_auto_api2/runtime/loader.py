@@ -7,9 +7,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from common.setting import data_dir_path, resolve_project_path
-from utils.cache_process.cache_control import CacheHandler, _cache_config
-from utils.read_files_tools.get_yaml_data_analysis import CaseData
+from pytest_auto_api2.common.setting import data_dir_path, resolve_project_path
+from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler, _cache_config
+from pytest_auto_api2.utils.read_files_tools.get_yaml_data_analysis import CaseData
 
 _CACHE_BUILT = False
 

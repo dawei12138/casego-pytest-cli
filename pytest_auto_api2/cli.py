@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.setting import (
+from pytest_auto_api2.common.setting import (
     CONFIG_PATH_ENV,
     DATA_DIR_ENV,
     PROJECT_ROOT_ENV,
@@ -237,13 +237,13 @@ def _allure_serve(project: Dict[str, Path], args: argparse.Namespace) -> None:
 
 
 def _send_notifications() -> None:
-    from utils import config
-    from utils.notify.ding_talk import DingTalkSendMsg
-    from utils.notify.lark import FeiShuTalkChatBot
-    from utils.notify.send_mail import SendEmail
-    from utils.notify.wechat_send import WeChatSend
-    from utils.other_tools.allure_data.allure_report_data import AllureFileClean
-    from utils.other_tools.models import NotificationType
+    from pytest_auto_api2.utils import config
+    from pytest_auto_api2.utils.notify.ding_talk import DingTalkSendMsg
+    from pytest_auto_api2.utils.notify.lark import FeiShuTalkChatBot
+    from pytest_auto_api2.utils.notify.send_mail import SendEmail
+    from pytest_auto_api2.utils.notify.wechat_send import WeChatSend
+    from pytest_auto_api2.utils.other_tools.allure_data.allure_report_data import AllureFileClean
+    from pytest_auto_api2.utils.other_tools.models import NotificationType
 
     allure_data = AllureFileClean().get_case_count()
     notification_mapping = {
@@ -265,7 +265,7 @@ def _send_notifications() -> None:
 
 
 def _write_excel_report() -> None:
-    from utils.other_tools.allure_data.error_case_excel import ErrorCaseExcel
+    from pytest_auto_api2.utils.other_tools.allure_data.error_case_excel import ErrorCaseExcel
 
     ErrorCaseExcel().write_case()
 
@@ -399,8 +399,8 @@ def _validate_cases(args: argparse.Namespace) -> Dict[str, Any]:
         require_test=False,
     )
 
-    from utils.read_files_tools.get_yaml_data_analysis import CaseData
-    from utils.read_files_tools.yaml_control import GetYamlData
+    from pytest_auto_api2.utils.read_files_tools.get_yaml_data_analysis import CaseData
+    from pytest_auto_api2.utils.read_files_tools.yaml_control import GetYamlData
 
     yaml_files = [p for p in _iter_yaml_files(project["data"]) if p.name != "proxy_data.yaml"]
     seen_case_ids: Dict[str, str] = {}
@@ -509,7 +509,7 @@ def _cmd_gen(args: argparse.Namespace) -> int:
     old_cwd = Path.cwd()
     try:
         os.chdir(project["root"])
-        from utils.read_files_tools.case_automatic_control import TestCaseAutomaticGeneration
+        from pytest_auto_api2.utils.read_files_tools.case_automatic_control import TestCaseAutomaticGeneration
 
         force_write = bool(getattr(args, "force", False) or getattr(args, "force_gen", False))
         TestCaseAutomaticGeneration(
@@ -611,9 +611,9 @@ import ast
 import allure
 import pytest
 
-from utils.other_tools.models import TestCase
-from utils.other_tools.allure_data.allure_tools import allure_step, allure_step_no
-from utils.read_files_tools.regular_control import cache_regular
+from pytest_auto_api2.utils.other_tools.models import TestCase
+from pytest_auto_api2.utils.other_tools.allure_data.allure_tools import allure_step, allure_step_no
+from pytest_auto_api2.utils.read_files_tools.regular_control import cache_regular
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +621,7 @@ from utils.read_files_tools.regular_control import cache_regular
 #
 # Cookie 鉴权示例：
 # import requests
-# from utils.cache_process.cache_control import CacheHandler
+# from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler
 #
 # @pytest.fixture(scope="session", autouse=True)
 # def work_login_init():
@@ -648,7 +648,7 @@ from utils.read_files_tools.regular_control import cache_regular
 #
 # Token 鉴权示例：
 # import requests
-# from utils.cache_process.cache_control import CacheHandler
+# from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler
 #
 # @pytest.fixture(scope="session", autouse=True)
 # def work_login_token_init():
@@ -966,5 +966,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
