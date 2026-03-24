@@ -101,6 +101,7 @@ class DependentData(BaseModel):
     jsonpath: Text
     set_cache: Optional[Text] = None
     replace_key: Optional[Text] = None
+    replace_value: Optional[Any] = None
 
 
 class DependentCaseData(BaseModel):
@@ -121,6 +122,7 @@ class SendRequest(BaseModel):
     cache_data: Optional[Text] = None
     set_cache: Optional[Text] = None
     replace_key: Optional[Text] = None
+    replace_value: Optional[Any] = None
 
 
 class TearDown(BaseModel):

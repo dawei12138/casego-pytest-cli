@@ -123,6 +123,15 @@ class TearDownHandler:
         test_case = regular(str(teardown_case))
         return ast.literal_eval(cache_regular(str(test_case)))
 
+    @staticmethod
+    def resolve_replace_value(default_value: Any, raw_replace_value: Any) -> Any:
+        """Resolve final replacement value with optional cache/dynamic placeholders."""
+        if raw_replace_value is None:
+            return default_value
+        if isinstance(raw_replace_value, str):
+            return cache_regular(regular(raw_replace_value))
+        return raw_replace_value
+
     @classmethod
     def teardown_http_requests(cls, teardown_case: Dict) -> "ResponseData":
         """Send teardown request."""
@@ -140,7 +149,10 @@ class TearDownHandler:
         response_dependent = jsonpath(obj=resp_data, expr=teardown_case_data.jsonpath)
 
         if response_dependent is not False:
-            replace_value = response_dependent[0]
+            replace_value = self.resolve_replace_value(
+                default_value=response_dependent[0],
+                raw_replace_value=teardown_case_data.replace_value,
+            )
             self.jsonpath_replace_data(
                 replace_key=replace_key,
                 replace_value=replace_value,
@@ -203,9 +215,14 @@ class TearDownHandler:
         else:
             cache_value = str(CacheHandler.get_cache(cache_name))
 
+        replace_value = cls.resolve_replace_value(
+            default_value=cache_value,
+            raw_replace_value=teardown_case.replace_value,
+        )
+
         cls.jsonpath_replace_data(
             replace_key=replace_key,
-            replace_value=cache_value,
+            replace_value=replace_value,
             teardown_case=teardown_case_payload,
         )
 

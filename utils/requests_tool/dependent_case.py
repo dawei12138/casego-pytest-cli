@@ -43,26 +43,34 @@ class DependentCase:
     @classmethod
     def set_cache_value(cls, dependent_data: "DependentData") -> Union[Text, None]:
         """Get optional cache target key from dependency definition."""
-        try:
-            return dependent_data.set_cache
-        except KeyError:
-            return None
+        return getattr(dependent_data, "set_cache", None)
 
     @classmethod
     def replace_key(cls, dependent_data: "DependentData"):
         """Get optional replacement path key from dependency definition."""
-        try:
-            return dependent_data.replace_key
-        except KeyError:
-            return None
+        return getattr(dependent_data, "replace_key", None)
 
-    def url_replace(self, replace_key: Text, jsonpath_dates: Dict, jsonpath_data: list) -> None:
+    @classmethod
+    def replace_value(cls, dependent_data: "DependentData") -> Any:
+        """Get optional replacement value template from dependency definition."""
+        return getattr(dependent_data, "replace_value", None)
+
+    @staticmethod
+    def _resolve_replace_value(raw_replace_value: Any, extracted: list) -> Any:
+        """Resolve final replacement value with optional cache/dynamic placeholders."""
+        if raw_replace_value is None:
+            return extracted[0]
+        if isinstance(raw_replace_value, str):
+            return cache_regular(regular(raw_replace_value))
+        return raw_replace_value
+
+    def url_replace(self, replace_key: Text, jsonpath_dates: Dict, replace_value: Any) -> None:
         """Handle url replacement helpers."""
         if "$url_param" in replace_key:
-            replaced_url = self.__yaml_case.url.replace(replace_key, str(jsonpath_data[0]))
+            replaced_url = self.__yaml_case.url.replace(replace_key, str(replace_value))
             jsonpath_dates["$.url"] = replaced_url
         else:
-            jsonpath_dates[replace_key] = jsonpath_data[0]
+            jsonpath_dates[replace_key] = replace_value
 
     @staticmethod
     def _parse_jsonpath_tokens(expr: Text) -> List[Union[Text, int]]:
@@ -160,16 +168,18 @@ class DependentCase:
                     extracted = self.jsonpath_data(obj=sql_data, expr=dependency_jsonpath)
                     cache_key = self.set_cache_value(item)
                     replace_key = self.replace_key(item)
+                    replace_value = self.replace_value(item)
 
                     if cache_key is not None:
                         CacheHandler.update_cache(cache_name=cache_key, value=extracted[0])
 
                     if replace_key is not None:
-                        jsonpath_dates[replace_key] = extracted[0]
+                        final_replace_value = self._resolve_replace_value(replace_value, extracted)
+                        jsonpath_dates[replace_key] = final_replace_value
                         self.url_replace(
                             replace_key=replace_key,
                             jsonpath_dates=jsonpath_dates,
-                            jsonpath_data=extracted,
+                            replace_value=final_replace_value,
                         )
             else:
                 WARNING.logger.warning("database switch is off, skip sql dependency handling")
@@ -179,6 +189,7 @@ class DependentCase:
         _jsonpath: Text,
         set_value: Text,
         replace_key: Text,
+        replace_value: Any,
         jsonpath_dates: Dict,
         data: Dict,
         dependent_type: int,
@@ -193,9 +204,14 @@ class DependentCase:
                 CacheHandler.update_cache(cache_name=set_value, value=extracted[0])
 
         if replace_key is not None:
+            final_replace_value = self._resolve_replace_value(replace_value, extracted)
             if dependent_type == 0:
-                jsonpath_dates[replace_key] = extracted[0]
-            self.url_replace(replace_key=replace_key, jsonpath_dates=jsonpath_dates, jsonpath_data=extracted)
+                jsonpath_dates[replace_key] = final_replace_value
+            self.url_replace(
+                replace_key=replace_key,
+                jsonpath_dates=jsonpath_dates,
+                replace_value=final_replace_value,
+            )
 
     def is_dependent(self) -> Union[Dict, bool]:
         """Check and collect dependent replacement values."""
@@ -224,6 +240,7 @@ class DependentCase:
                             for item in dependent_data:
                                 dependency_jsonpath = item.jsonpath
                                 replace_key = self.replace_key(item)
+                                replace_value = self.replace_value(item)
                                 cache_key = self.set_cache_value(item)
 
                                 if item.dependent_type == DependentType.RESPONSE.value:
@@ -232,6 +249,7 @@ class DependentCase:
                                         _jsonpath=dependency_jsonpath,
                                         set_value=cache_key,
                                         replace_key=replace_key,
+                                        replace_value=replace_value,
                                         jsonpath_dates=jsonpath_dates,
                                         dependent_type=0,
                                     )
@@ -241,6 +259,7 @@ class DependentCase:
                                         _jsonpath=dependency_jsonpath,
                                         set_value=cache_key,
                                         replace_key=replace_key,
+                                        replace_value=replace_value,
                                         jsonpath_dates=jsonpath_dates,
                                         dependent_type=1,
                                     )

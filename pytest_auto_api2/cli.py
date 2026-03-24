@@ -616,24 +616,81 @@ from utils.other_tools.allure_data.allure_tools import allure_step, allure_step_
 from utils.read_files_tools.regular_control import cache_regular
 
 
+# ---------------------------------------------------------------------------
+# 登录鉴权示例（默认注释，按需取消）
+#
+# Cookie 鉴权示例：
+# import requests
+# from utils.cache_process.cache_control import CacheHandler
+#
+# @pytest.fixture(scope="session", autouse=True)
+# def work_login_init():
+#     # Login once and cache cookie string for dependent cases.
+#     url = "https://www.wanandroid.com/user/login"
+#     data = {
+#         "username": 19155530606,
+#         "password": 123456,
+#     }
+#     headers = {"Content-Type": "application/x-www-form-urlencoded"}
+#
+#     res = requests.post(url=url, data=data, verify=True, headers=headers)
+#     response_cookie = res.cookies
+#
+#     cookies = ""
+#     for key, value in response_cookie.items():
+#         cookies += f"{key}={value};"
+#
+#     CacheHandler.update_cache(cache_name="login_cookie", value=cookies)
+#     # YAML headers 用法：
+#     # headers:
+#     #   cookie: $cache{login_cookie}
+#
+#
+# Token 鉴权示例：
+# import requests
+# from utils.cache_process.cache_control import CacheHandler
+#
+# @pytest.fixture(scope="session", autouse=True)
+# def work_login_token_init():
+#     # Login once and cache token/bearer for dependent cases.
+#     url = "https://api.example.com/user/login"
+#     json_data = {
+#         "username": "your_username",
+#         "password": "your_password",
+#     }
+#     headers = {"Content-Type": "application/json"}
+#
+#     res = requests.post(url=url, json=json_data, verify=True, headers=headers)
+#     token = res.json()["data"]["token"]
+#
+#     CacheHandler.update_cache(cache_name="login_token", value=token)
+#     CacheHandler.update_cache(cache_name="login_bearer_token", value=f"Bearer {token}")
+#     # YAML headers 用法（二选一）：
+#     # headers:
+#     #   Authorization: Bearer $cache{login_token}
+#     # 或
+#     # headers:
+#     #   Authorization: $cache{login_bearer_token}
+# ---------------------------------------------------------------------------
+
+
 def pytest_configure(config):
-    config.addinivalue_line(\"markers\", \"smoke\")
+    config.addinivalue_line("markers", "smoke")
 
 
-@pytest.fixture(scope=\"function\", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def case_skip(in_data):
     in_data = TestCase(**in_data)
     if ast.literal_eval(cache_regular(str(in_data.is_run))) is False:
         allure.dynamic.title(in_data.detail)
-        allure_step_no(f\"Request URL: {in_data.url}\")
-        allure_step_no(f\"Request method: {in_data.method}\")
-        allure_step(\"Headers\", in_data.headers)
-        allure_step(\"Request body\", in_data.data)
-        allure_step(\"Dependence data\", in_data.dependence_case_data)
-        allure_step(\"Assert data\", in_data.assert_data)
+        allure_step_no(f"Request URL: {in_data.url}")
+        allure_step_no(f"Request method: {in_data.method}")
+        allure_step("Headers", in_data.headers)
+        allure_step("Request body", in_data.data)
+        allure_step("Dependence data", in_data.dependence_case_data)
+        allure_step("Assert data", in_data.assert_data)
         pytest.skip()
 """
-
 
 def _template_sample_yaml() -> str:
     return """case_common:
@@ -909,4 +966,5 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

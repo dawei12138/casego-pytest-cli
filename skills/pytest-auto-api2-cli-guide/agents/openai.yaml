@@ -1,0 +1,3 @@
+﻿interface:
+  display_name: "pytest-auto-api2 CLI 中文指南"
+  short_description: "指导 casego、YAML 与 conftest 登录鉴权（Cookie/Token）"
