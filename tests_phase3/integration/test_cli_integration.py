@@ -82,6 +82,7 @@ def test_gen_and_run_with_custom_data_and_test_dir(tmp_path):
         "custom_cases",
         "--test-dir",
         "generated_tests",
+        "--no-allure",
         "-k",
         "smoke_cli_marker",
     )
@@ -140,6 +141,7 @@ def test_run_json_output_contains_summary(tmp_path):
         "run",
         "--project-root",
         str(project_dir),
+        "--no-allure",
         "--json",
         "-k",
         "smoke_json_marker",

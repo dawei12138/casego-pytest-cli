@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """Command-line entrypoint for pytest-auto-api2."""
 
@@ -7,8 +7,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +24,8 @@ from pytest_auto_api2.common.setting import (
 
 DEFAULT_ALLURE_RESULTS_DIR = "report/tmp"
 DEFAULT_ALLURE_HTML_DIR = "report/html"
+DEFAULT_ALLURE_HISTORY_DIR = "report/history"
+DEFAULT_REPORT_ARCHIVE_TIME_FORMAT = "%Y%m%d_%H%M%S"
 
 
 class _PytestResultCollector:
@@ -172,6 +176,101 @@ def _get_allure_paths(project: Dict[str, Path], args: argparse.Namespace) -> Dic
     return {"result": result_dir, "html": html_dir}
 
 
+def _get_allure_history_dir(project: Dict[str, Path], args: argparse.Namespace) -> Path:
+    return _resolve_path_from_root(project["root"], args.allure_history_dir, DEFAULT_ALLURE_HISTORY_DIR)
+
+
+def _allure_command_candidates() -> List[str]:
+    if os.name == "nt":
+        return ["allure.bat", "allure.cmd", "allure.exe", "allure"]
+    return ["allure"]
+
+
+def _resolve_allure_cli(args: argparse.Namespace) -> str:
+    custom = getattr(args, "allure_command", None)
+    if custom:
+        return str(custom)
+
+    for candidate in _allure_command_candidates():
+        if shutil.which(candidate):
+            return candidate
+
+    # Fallback name for clearer error reporting in _run_allure_cli.
+    return _allure_command_candidates()[0]
+
+
+def _run_allure_cli(args: argparse.Namespace, cli_args: List[str]) -> None:
+    command_name = _resolve_allure_cli(args)
+    command = [command_name, *cli_args]
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        custom = getattr(args, "allure_command", None)
+        if custom:
+            expected = f"`{custom}`"
+        else:
+            expected = " / ".join(f"`{item}`" for item in _allure_command_candidates())
+        raise FileNotFoundError(
+            "Allure CLI not found. "
+            f"Expected {expected} in PATH, "
+            "or pass --allure-command with the full executable path."
+        ) from exc
+
+
+def _build_archive_label(args: argparse.Namespace, now: Optional[datetime] = None) -> str:
+    current = now or datetime.now()
+    return current.strftime(args.report_name_format)
+
+
+def _build_unique_archive_dir(base_dir: Path, label: str) -> Path:
+    candidate = base_dir / label
+    suffix = 1
+    while candidate.exists():
+        candidate = base_dir / f"{label}_{suffix:02d}"
+        suffix += 1
+    return candidate
+
+
+def _archive_allure_report(*, html_dir: Path, history_root: Path, label: str) -> Path:
+    if not html_dir.exists():
+        raise FileNotFoundError(f"Allure HTML directory does not exist: {html_dir}")
+    history_root.mkdir(parents=True, exist_ok=True)
+    archive_dir = _build_unique_archive_dir(history_root, label)
+    shutil.copytree(html_dir, archive_dir)
+    return archive_dir
+
+
+def _print_report_paths(
+    *,
+    latest_index: Path,
+    archive_dir: Optional[Path],
+    archive_index: Optional[Path],
+) -> None:
+    print(f"Allure static report (latest): {latest_index}")
+    if archive_dir is not None and archive_index is not None:
+        print(f"Allure report archive: {archive_dir}")
+        print(f"Allure static report (archive): {archive_index}")
+
+
+def _open_report_in_browser(index_file: Path) -> None:
+    if not index_file.exists():
+        raise FileNotFoundError(f"Allure report index file not found: {index_file}")
+    webbrowser.open(index_file.resolve().as_uri())
+
+
+def _should_generate_report(args: argparse.Namespace) -> bool:
+    if not args.allure:
+        return False
+    return bool(
+        args.auto_report
+        or args.generate_report
+        or args.serve_report
+        or args.notify
+        or args.excel_report
+        or args.open_report
+    )
+
+
 def _build_pytest_args(args: argparse.Namespace, project: Dict[str, Path]) -> List[str]:
     pytest_args: List[str] = ["-W", "ignore:Module already imported:pytest.PytestWarning"]
 
@@ -205,26 +304,46 @@ def _build_pytest_args(args: argparse.Namespace, project: Dict[str, Path]) -> Li
     return pytest_args
 
 
-def _allure_generate(project: Dict[str, Path], args: argparse.Namespace) -> None:
+def _allure_generate(project: Dict[str, Path], args: argparse.Namespace) -> Dict[str, Optional[Path]]:
     allure_paths = _get_allure_paths(project, args)
-    subprocess.run(
+    allure_paths["html"].mkdir(parents=True, exist_ok=True)
+    _run_allure_cli(
+        args,
         [
-            "allure",
             "generate",
             str(allure_paths["result"]),
             "-o",
             str(allure_paths["html"]),
             "--clean",
         ],
-        check=True,
     )
+
+    latest_index = allure_paths["html"] / "index.html"
+    archive_dir: Optional[Path] = None
+    archive_index: Optional[Path] = None
+
+    if args.archive_report:
+        archive_label = _build_archive_label(args)
+        archive_dir = _archive_allure_report(
+            html_dir=allure_paths["html"],
+            history_root=_get_allure_history_dir(project, args),
+            label=archive_label,
+        )
+        archive_index = archive_dir / "index.html"
+
+    return {
+        "latest_html_dir": allure_paths["html"],
+        "latest_index": latest_index,
+        "archive_dir": archive_dir,
+        "archive_index": archive_index,
+    }
 
 
 def _allure_serve(project: Dict[str, Path], args: argparse.Namespace) -> None:
     allure_paths = _get_allure_paths(project, args)
-    subprocess.run(
+    _run_allure_cli(
+        args,
         [
-            "allure",
             "serve",
             str(allure_paths["result"]),
             "-h",
@@ -232,7 +351,6 @@ def _allure_serve(project: Dict[str, Path], args: argparse.Namespace) -> None:
             "-p",
             str(args.report_port),
         ],
-        check=True,
     )
 
 
@@ -284,6 +402,9 @@ def _build_run_json_payload(
     report_served: bool,
     notified: bool,
     excel_report: bool,
+    report_opened: bool,
+    report_index: Optional[str],
+    report_archive_dir: Optional[str],
 ) -> Dict[str, Any]:
     summary = collector.summary if collector is not None else {}
     failed_cases = collector.failed_cases if collector is not None else []
@@ -311,6 +432,9 @@ def _build_run_json_payload(
             "report_served": report_served,
             "notified": notified,
             "excel_report": excel_report,
+            "report_opened": report_opened,
+            "report_index": report_index,
+            "report_archive_dir": report_archive_dir,
         },
     }
 
@@ -319,9 +443,17 @@ def _run_pytest(args: argparse.Namespace) -> int:
     if args.clean_allure and not args.allure:
         raise ValueError("--clean-allure requires --allure")
 
-    report_flow_enabled = args.generate_report or args.serve_report or args.notify or args.excel_report
-    if report_flow_enabled and not args.allure:
+    requires_allure = (
+        args.generate_report
+        or args.serve_report
+        or args.notify
+        or args.excel_report
+        or args.open_report
+    )
+    if requires_allure and not args.allure:
         raise ValueError("Report/notify options require --allure to be enabled.")
+
+    report_flow_enabled = _should_generate_report(args)
 
     project = _prepare_project(
         project_root=args.project_root,
@@ -342,6 +474,9 @@ def _run_pytest(args: argparse.Namespace) -> int:
     report_served = False
     notified = False
     excel_report_generated = False
+    report_opened = False
+    report_index_path: Optional[Path] = None
+    report_archive_dir: Optional[Path] = None
 
     old_cwd = Path.cwd()
     pytest_args = _build_pytest_args(args, project)
@@ -350,8 +485,35 @@ def _run_pytest(args: argparse.Namespace) -> int:
         exit_code = int(pytest.main(pytest_args, plugins=plugins))
 
         if report_flow_enabled:
-            _allure_generate(project, args)
+            report_meta = _allure_generate(project, args)
+            latest_index = report_meta.get("latest_index")
+            archive_index = report_meta.get("archive_index")
+            archive_dir = report_meta.get("archive_dir")
+
+            if isinstance(archive_index, Path):
+                report_index_path = archive_index
+            elif isinstance(latest_index, Path):
+                report_index_path = latest_index
+
+            if isinstance(archive_dir, Path):
+                report_archive_dir = archive_dir
+
             report_generated = True
+            if not args.json and isinstance(latest_index, Path):
+                _print_report_paths(
+                    latest_index=latest_index,
+                    archive_dir=report_archive_dir,
+                    archive_index=archive_index if isinstance(archive_index, Path) else None,
+                )
+
+        if args.open_report:
+            if report_index_path is None:
+                raise ValueError("No report available to open. Enable --allure report generation first.")
+            _open_report_in_browser(report_index_path)
+            report_opened = True
+            if not args.json:
+                print(f"Opened report in browser: {report_index_path}")
+
         if args.notify:
             _send_notifications()
             notified = True
@@ -375,6 +537,9 @@ def _run_pytest(args: argparse.Namespace) -> int:
                 report_served=report_served,
                 notified=notified,
                 excel_report=excel_report_generated,
+                report_opened=report_opened,
+                report_index=str(report_index_path) if report_index_path is not None else None,
+                report_archive_dir=str(report_archive_dir) if report_archive_dir is not None else None,
             )
         )
 
@@ -550,7 +715,7 @@ tester_name: qa
 host: https://www.wanandroid.com
 app_host:
 real_time_update_test_cases: true
-notification_type: \"0\"
+notification_type: "0"
 excel_report: false
 
 ding_talk:
@@ -617,9 +782,9 @@ from pytest_auto_api2.utils.read_files_tools.regular_control import cache_regula
 
 
 # ---------------------------------------------------------------------------
-# 登录鉴权示例（默认注释，按需取消）
+# 闂佽皫鍡╁殭缂傚秴绉归弻搴ｂ偓娑櫳戠紞鈧紓浣插亾閺夌偞澹嗘导鎰版煥濞戞澧︾紒顕呭灣閹峰濡堕崱妯绘畼闂備焦褰冮…顓犳濠靛绠板鑸靛姈娴犳﹢鏌涘▎鎰缂佸鍏橀弫?
 #
-# Cookie 鉴权示例：
+# Cookie 闂備焦娼欓悺銊ヮ焽閸垻鐭嗛弶鐐村娴兼劙鏌?
 # import requests
 # from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler
 #
@@ -641,12 +806,12 @@ from pytest_auto_api2.utils.read_files_tools.regular_control import cache_regula
 #         cookies += f"{key}={value};"
 #
 #     CacheHandler.update_cache(cache_name="login_cookie", value=cookies)
-#     # YAML headers 用法：
+#     # YAML headers 闂佹椿娼块崝宥囨兜閸洘鏅?
 #     # headers:
 #     #   cookie: $cache{login_cookie}
 #
 #
-# Token 鉴权示例：
+# Token 闂備焦娼欓悺銊ヮ焽閸垻鐭嗛弶鐐村娴兼劙鏌?
 # import requests
 # from pytest_auto_api2.utils.cache_process.cache_control import CacheHandler
 #
@@ -665,10 +830,10 @@ from pytest_auto_api2.utils.read_files_tools.regular_control import cache_regula
 #
 #     CacheHandler.update_cache(cache_name="login_token", value=token)
 #     CacheHandler.update_cache(cache_name="login_bearer_token", value=f"Bearer {token}")
-#     # YAML headers 用法（二选一）：
+#     # YAML headers 闂佹椿娼块崝宥囨兜閸洘鏅柛顐ｇ矌閻у矂姊洪銏╂Х缂佹梹鎸抽弫宥嗗緞濞戞氨鐛?
 #     # headers:
 #     #   Authorization: Bearer $cache{login_token}
-#     # 或
+#     # 闂?
 #     # headers:
 #     #   Authorization: $cache{login_bearer_token}
 # ---------------------------------------------------------------------------
@@ -734,8 +899,6 @@ if __name__ == "__main__":
                 "all",
                 "--project-root",
                 ".",
-                "--allure",
-                "--generate-report",
             ]
         )
     )
@@ -829,8 +992,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_common.add_argument(
         "--allure",
+        dest="allure",
         action="store_true",
-        help="Enable Allure results collection (--alluredir).",
+        default=True,
+        help="Enable Allure results collection (--alluredir). Default: enabled.",
+    )
+    run_common.add_argument(
+        "--no-allure",
+        dest="allure",
+        action="store_false",
+        help="Disable Allure results collection and report generation.",
     )
     run_common.add_argument(
         "--clean-allure",
@@ -848,9 +1019,56 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Allure HTML output directory. Default: {DEFAULT_ALLURE_HTML_DIR}",
     )
     run_common.add_argument(
+        "--allure-command",
+        default=None,
+        help="Allure CLI executable path/name. Defaults to PATH auto-detect.",
+    )
+    run_common.add_argument(
+        "--allure-history-dir",
+        default=DEFAULT_ALLURE_HISTORY_DIR,
+        help=f"Allure HTML archive directory. Default: {DEFAULT_ALLURE_HISTORY_DIR}",
+    )
+    run_common.add_argument(
+        "--report-name-format",
+        default=DEFAULT_REPORT_ARCHIVE_TIME_FORMAT,
+        help="Datetime format used for report archive naming. "
+        f"Default: {DEFAULT_REPORT_ARCHIVE_TIME_FORMAT.replace('%', '%%')}",
+    )
+    run_common.add_argument(
+        "--auto-report",
+        dest="auto_report",
+        action="store_true",
+        default=True,
+        help="Auto-generate allure HTML report when --allure is enabled (default: enabled).",
+    )
+    run_common.add_argument(
+        "--no-auto-report",
+        dest="auto_report",
+        action="store_false",
+        help="Disable automatic allure HTML generation after pytest run.",
+    )
+    run_common.add_argument(
         "--generate-report",
         action="store_true",
-        help="Generate allure HTML report after pytest run (requires --allure).",
+        help="Force-generate allure HTML report after pytest run (requires --allure).",
+    )
+    run_common.add_argument(
+        "--archive-report",
+        dest="archive_report",
+        action="store_true",
+        default=True,
+        help="Archive each generated report under a timestamped directory (default: enabled).",
+    )
+    run_common.add_argument(
+        "--no-archive-report",
+        dest="archive_report",
+        action="store_false",
+        help="Disable report archiving to timestamped directories.",
+    )
+    run_common.add_argument(
+        "--open-report",
+        action="store_true",
+        help="Open generated static report index.html with default browser (requires --allure).",
     )
     run_common.add_argument(
         "--serve-report",

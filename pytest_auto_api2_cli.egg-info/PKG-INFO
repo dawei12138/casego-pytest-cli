@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pytest-auto-api2-cli
-Version: 0.3.0
+Version: 0.3.1
 Summary: CLI for generating and running pytest-auto-api2 test cases.
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown

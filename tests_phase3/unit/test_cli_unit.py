@@ -102,6 +102,22 @@ def test_build_pytest_args_respects_options(tmp_path):
     assert "custom_target.py" in pytest_args
 
 
+
+
+def test_build_pytest_args_includes_allure_by_default(tmp_path):
+    parser = cli._build_parser()
+    args = parser.parse_args(["run"])
+    project = {
+        "root": tmp_path,
+        "config": tmp_path / "common" / "config.yaml",
+        "data": tmp_path / "data",
+        "test": tmp_path / "test_case",
+    }
+
+    pytest_args = cli._build_pytest_args(args, project)
+    assert "--alluredir" in pytest_args
+
+
 def test_build_pytest_args_json_mode_uses_quiet(tmp_path):
     parser = cli._build_parser()
     args = parser.parse_args(["run", "--json"])
@@ -154,3 +170,85 @@ def test_gen_and_all_force_flags_are_available():
     args_all = parser.parse_args(["all", "--force-gen"])
     assert args_all.command == "all"
     assert args_all.force_gen is True
+
+
+def test_allure_report_flags_defaults_and_switches():
+    parser = cli._build_parser()
+
+    args_default = parser.parse_args(["run"])
+    assert args_default.allure is True
+    assert args_default.auto_report is True
+    assert args_default.archive_report is True
+    assert args_default.open_report is False
+    assert args_default.allure_history_dir == cli.DEFAULT_ALLURE_HISTORY_DIR
+
+    args_custom = parser.parse_args(
+        ["run", "--no-allure", "--no-auto-report", "--no-archive-report", "--open-report"]
+    )
+    assert args_custom.allure is False
+    assert args_custom.auto_report is False
+    assert args_custom.archive_report is False
+    assert args_custom.open_report is True
+
+
+def test_should_generate_report_with_allure_defaults():
+    parser = cli._build_parser()
+
+    args_default = parser.parse_args(["run"])
+    assert cli._should_generate_report(args_default) is True
+
+    args_disabled = parser.parse_args(["run", "--no-allure", "--no-auto-report"])
+    assert cli._should_generate_report(args_disabled) is False
+
+    args_forced = parser.parse_args(["run", "--allure", "--no-auto-report", "--generate-report"])
+    assert cli._should_generate_report(args_forced) is True
+
+
+def test_archive_allure_report_creates_versioned_directories(tmp_path):
+    html_dir = tmp_path / "html"
+    html_dir.mkdir(parents=True)
+    (html_dir / "index.html").write_text("<html>ok</html>", encoding="utf-8")
+
+    history_root = tmp_path / "history"
+    first = cli._archive_allure_report(html_dir=html_dir, history_root=history_root, label="20260326_120000")
+    second = cli._archive_allure_report(html_dir=html_dir, history_root=history_root, label="20260326_120000")
+
+    assert first.name == "20260326_120000"
+    assert second.name == "20260326_120000_01"
+    assert (first / "index.html").exists()
+    assert (second / "index.html").exists()
+
+
+def test_resolve_allure_cli_prefers_windows_candidates(monkeypatch):
+    parser = cli._build_parser()
+    args = parser.parse_args(["run"])
+
+    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: r"C:\tools\allure.cmd" if name == "allure.cmd" else None,
+    )
+
+    assert cli._resolve_allure_cli(args) == "allure.cmd"
+
+
+
+def test_resolve_allure_cli_uses_linux_allure(monkeypatch):
+    parser = cli._build_parser()
+    args = parser.parse_args(["run"])
+
+    monkeypatch.setattr(cli.os, "name", "posix", raising=False)
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: "/usr/bin/allure" if name == "allure" else None,
+    )
+
+    assert cli._resolve_allure_cli(args) == "allure"
+
+
+def test_resolve_allure_cli_supports_override():
+    parser = cli._build_parser()
+    args = parser.parse_args(["run", "--allure-command", "custom-allure-cli"])
+    assert cli._resolve_allure_cli(args) == "custom-allure-cli"
