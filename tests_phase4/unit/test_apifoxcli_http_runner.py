@@ -1,0 +1,81 @@
+import json
+from types import SimpleNamespace
+
+from pytest_auto_api2.apifoxcli.assertions import assert_response
+from pytest_auto_api2.apifoxcli.context import RunContext
+from pytest_auto_api2.apifoxcli.extractor import apply_extractors
+from pytest_auto_api2.apifoxcli.transport.http import execute_http_api
+
+
+class DummyResponse:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {"errorCode": 0, "data": {"token": "abc"}}
+        self.headers = {"Content-Type": "application/json"}
+        self.cookies = {}
+        self.text = json.dumps(self._payload)
+
+    def json(self):
+        return self._payload
+
+
+def test_execute_http_api_builds_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, headers=None, params=None, json=None, data=None, timeout=30):
+        captured.update(
+            {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "params": params,
+                "json": json,
+                "data": data,
+            }
+        )
+        return DummyResponse()
+
+    monkeypatch.setattr("pytest_auto_api2.apifoxcli.transport.http.requests.request", fake_request)
+
+    api = SimpleNamespace(
+        spec=SimpleNamespace(
+            request=SimpleNamespace(
+                method="POST",
+                path="/login",
+                headers={"X-Tenant": "${env.tenant}"},
+                query=None,
+                json={"username": "${dataset.username}"},
+                form=None,
+            ),
+            expect=SimpleNamespace(status=200, assertions=[]),
+            extract=[],
+        )
+    )
+    context = RunContext(
+        env={"baseUrl": "http://example.com", "variables": {"tenant": "qa"}},
+        dataset={"username": "alice"},
+    )
+    response = execute_http_api(api, context)
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "http://example.com/login"
+    assert captured["headers"]["X-Tenant"] == "qa"
+    assert captured["json"]["username"] == "alice"
+    assert response.status_code == 200
+
+
+def test_apply_extractors_writes_context_values():
+    context = RunContext(env={"baseUrl": "http://example.com", "variables": {}}, dataset={})
+    response = DummyResponse(payload={"data": {"token": "abc"}})
+    extractors = [SimpleNamespace(name="token", from_="response", expr="$.data.token")]
+    apply_extractors(extractors, response, context)
+    assert context.values["token"] == "abc"
+
+
+def test_assert_response_checks_status_and_jsonpath():
+    response = DummyResponse(payload={"errorCode": 0})
+    expect = SimpleNamespace(
+        status=200,
+        assertions=[SimpleNamespace(id="errorCode", source="response", expr="$.errorCode", op="==", value=0)],
+    )
+    assert_response(expect, response, context={})
