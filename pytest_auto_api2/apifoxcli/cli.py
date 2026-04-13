@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 from .loader import load_project
+from .runner import run_api, run_suite
 from .scaffold import init_project
 from .validator import validate_project
 
@@ -22,7 +24,42 @@ def _cmd_project_init(args: argparse.Namespace) -> int:
 def _cmd_validate(args: argparse.Namespace) -> int:
     project = load_project(Path(args.project_root))
     errors = validate_project(project)
-    return 0 if not errors else 2
+    if errors:
+        for item in errors:
+            print(f"validate error: {item}")
+        return 2
+    print("validate ok")
+    return 0
+
+
+def _emit_json(summary) -> None:
+    print(
+        json.dumps(
+            {
+                "total": summary.total,
+                "passed": summary.passed,
+                "failed": summary.failed,
+                "details": summary.details,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def _cmd_api_send(args: argparse.Namespace) -> int:
+    project = load_project(Path(args.project_root))
+    summary = run_api(project, args.resource_id, args.env)
+    if args.json:
+        _emit_json(summary)
+    return 0 if summary.failed == 0 else 1
+
+
+def _cmd_suite_run(args: argparse.Namespace) -> int:
+    project = load_project(Path(args.project_root))
+    summary = run_suite(project, args.resource_id, args.env)
+    if args.json:
+        _emit_json(summary)
+    return 0 if summary.failed == 0 else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     api_send.add_argument("--project-root", default=".")
     api_send.add_argument("--env", default=None)
     api_send.add_argument("--json", action="store_true")
-    api_send.set_defaults(handler=_cmd_not_implemented)
+    api_send.set_defaults(handler=_cmd_api_send)
 
     suite_parser = sub.add_parser("suite")
     suite_sub = suite_parser.add_subparsers(dest="action", required=True)
@@ -55,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     suite_run.add_argument("--project-root", default=".")
     suite_run.add_argument("--env", default=None)
     suite_run.add_argument("--json", action="store_true")
-    suite_run.set_defaults(handler=_cmd_not_implemented)
+    suite_run.set_defaults(handler=_cmd_suite_run)
 
     return parser
 
