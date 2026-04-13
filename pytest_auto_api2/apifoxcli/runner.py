@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from .assertions import assert_response
 from .context import RunContext
 from .extractor import apply_extractors
-from .planner import build_api_plan, build_suite_plan
+from .planner import build_api_plan, build_flow_plan, build_suite_plan
 from .transport.http import execute_http_api
 
 
@@ -18,8 +18,13 @@ class RunSummary:
     details: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def run_api(project, api_id: str, env_override: Optional[str] = None) -> RunSummary:
-    plan = build_api_plan(project, api_id, env_override)
+def run_api(project, api_id: str, env_override: Optional[str] = None, dataset_ref: Optional[str] = None) -> RunSummary:
+    plan = build_api_plan(project, api_id, env_override, dataset_ref)
+    return _execute_plan(project, plan)
+
+
+def run_flow(project, flow_id: str, env_override: Optional[str] = None, dataset_ref: Optional[str] = None) -> RunSummary:
+    plan = build_flow_plan(project, flow_id, env_override, dataset_ref)
     return _execute_plan(project, plan)
 
 
@@ -30,11 +35,17 @@ def run_suite(project, suite_id: str, env_override: Optional[str] = None) -> Run
 
 def _execute_plan(project, plan) -> RunSummary:
     summary = RunSummary(total=len(plan.nodes))
+    contexts: Dict[str, RunContext] = {}
 
     for node in plan.nodes:
         api = project.apis[node.resource_id]
-        env = project.envs[node.env_id].spec.model_dump()
-        context = RunContext(env=env, dataset=node.dataset)
+        context = contexts.get(node.context_key)
+        if context is None:
+            env = project.envs[node.env_id].spec.model_dump()
+            context = RunContext(env=env, dataset=node.dataset)
+            contexts[node.context_key] = context
+        else:
+            context.dataset = node.dataset
 
         try:
             response = execute_http_api(api, context)

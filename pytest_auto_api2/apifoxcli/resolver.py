@@ -21,17 +21,28 @@ def _resolve_token(token: str, context: RunContext) -> Any:
     raise KeyError(f"unsupported token: {token}")
 
 
-def resolve_value(value: Any, context: RunContext) -> Any:
+def resolve_value(value: Any, context: RunContext, missing: str = "empty") -> Any:
     if isinstance(value, dict):
-        return {key: resolve_value(item, context) for key, item in value.items()}
+        return {key: resolve_value(item, context, missing=missing) for key, item in value.items()}
     if isinstance(value, list):
-        return [resolve_value(item, context) for item in value]
+        return [resolve_value(item, context, missing=missing) for item in value]
     if not isinstance(value, str):
         return value
 
-    def replace(match: re.Match[str]) -> str:
-        token = match.group(1)
-        resolved = _resolve_token(token, context)
-        return "" if resolved is None else str(resolved)
+    had_token = False
+    had_missing_token = False
 
-    return TOKEN_RE.sub(replace, value)
+    def replace(match: re.Match[str]) -> str:
+        nonlocal had_token, had_missing_token
+        token = match.group(1)
+        had_token = True
+        resolved = _resolve_token(token, context)
+        if resolved is None:
+            had_missing_token = True
+            return ""
+        return str(resolved)
+
+    resolved_value = TOKEN_RE.sub(replace, value)
+    if missing == "none" and had_token and had_missing_token:
+        return None
+    return resolved_value

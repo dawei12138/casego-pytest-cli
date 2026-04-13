@@ -19,6 +19,45 @@ def test_build_parser_supports_api_send():
     assert args.json is True
 
 
+def test_build_parser_supports_flow_run():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["flow", "run", "auth.bootstrap", "--env", "qa", "--dataset", "auth.users", "--json"]
+    )
+    assert args.resource == "flow"
+    assert args.action == "run"
+    assert args.resource_id == "auth.bootstrap"
+    assert args.env == "qa"
+    assert args.dataset == "auth.users"
+    assert args.json is True
+
+
+def test_build_parser_supports_project_import_openapi():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "project",
+            "import-openapi",
+            "--project-root",
+            "demo",
+            "--source",
+            "https://example.com/openapi.json",
+            "--server-description",
+            "qa",
+            "--include-path",
+            "/login",
+            "--include-path",
+            "/getInfo",
+        ]
+    )
+    assert args.resource == "project"
+    assert args.action == "import-openapi"
+    assert args.project_root == "demo"
+    assert args.source == "https://example.com/openapi.json"
+    assert args.server_description == "qa"
+    assert args.include_path == ["/login", "/getInfo"]
+
+
 def test_main_unknown_command_returns_non_zero():
     exit_code = main(["validate", "--project-root", "missing-project"])
     assert exit_code != 0

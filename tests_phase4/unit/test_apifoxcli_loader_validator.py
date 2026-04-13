@@ -50,3 +50,26 @@ def test_validator_rejects_missing_env_reference(tmp_path):
     project = load_project(tmp_path)
     errors = validate_project(project)
     assert any("envRef" in item for item in errors)
+
+
+def test_validator_checks_env_headers_and_request_json_body(tmp_path):
+    apifox = tmp_path / "apifox"
+    (apifox / "envs").mkdir(parents=True)
+    (apifox / "apis").mkdir()
+    (apifox / "project.yaml").write_text(
+        "kind: project\nid: default\nname: demo\nspec:\n  defaultEnv: qa\n",
+        encoding="utf-8",
+    )
+    (apifox / "envs" / "qa.yaml").write_text(
+        "kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://example.com\n  headers:\n    Authorization: Bearer ${context.token}\n  variables: {}\n",
+        encoding="utf-8",
+    )
+    (apifox / "apis" / "login.yaml").write_text(
+        "kind: api\nid: user.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    json:\n      username: ${dataset.username}\n      password: ${bad.password}\n  expect:\n    status: 200\n    assertions: []\n",
+        encoding="utf-8",
+    )
+
+    project = load_project(tmp_path)
+    errors = validate_project(project)
+    assert any("bad.password" in item for item in errors)
+    assert all("context.token" not in item for item in errors)

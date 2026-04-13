@@ -29,13 +29,23 @@ def validate_project(project: LoadedProject) -> List[str]:
     if project.project.spec.defaultEnv not in project.envs:
         errors.append(f"project.defaultEnv not found: {project.project.spec.defaultEnv}")
 
+    for env in project.envs.values():
+        for raw in _iter_string_values(env.spec.headers):
+            for token in TOKEN_RE.findall(raw):
+                if not token.startswith(SUPPORTED_PREFIXES):
+                    errors.append(f"env {env.id} unsupported expression: {token}")
+
     for api in project.apis.values():
         env_ref = api.spec.envRef or project.project.spec.defaultEnv
         if env_ref not in project.envs:
             errors.append(f"api {api.id} envRef not found: {env_ref}")
 
-        for field_name in ("headers", "query", "json", "form"):
-            field_value = getattr(api.spec.request, field_name)
+        for field_name, field_value in (
+            ("headers", api.spec.request.headers),
+            ("query", api.spec.request.query),
+            ("json", api.spec.request.json_body),
+            ("form", api.spec.request.form),
+        ):
             for raw in _iter_string_values(field_value):
                 for token in TOKEN_RE.findall(raw):
                     if not token.startswith(SUPPORTED_PREFIXES):

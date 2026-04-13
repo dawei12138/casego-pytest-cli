@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from .loader import load_project
-from .runner import run_api, run_suite
+from .openapi_importer import import_openapi_project
+from .runner import run_api, run_flow, run_suite
 from .scaffold import init_project
 from .validator import validate_project
 
@@ -18,6 +19,18 @@ def _cmd_not_implemented(_args: argparse.Namespace) -> int:
 
 def _cmd_project_init(args: argparse.Namespace) -> int:
     init_project(Path(args.project_root))
+    return 0
+
+
+def _cmd_project_import_openapi(args: argparse.Namespace) -> int:
+    import_openapi_project(
+        root=Path(args.project_root),
+        source=args.source,
+        env_id=args.env_id,
+        server_description=args.server_description,
+        server_url=args.server_url,
+        include_paths=args.include_path,
+    )
     return 0
 
 
@@ -48,7 +61,15 @@ def _emit_json(summary) -> None:
 
 def _cmd_api_send(args: argparse.Namespace) -> int:
     project = load_project(Path(args.project_root))
-    summary = run_api(project, args.resource_id, args.env)
+    summary = run_api(project, args.resource_id, args.env, args.dataset)
+    if args.json:
+        _emit_json(summary)
+    return 0 if summary.failed == 0 else 1
+
+
+def _cmd_flow_run(args: argparse.Namespace) -> int:
+    project = load_project(Path(args.project_root))
+    summary = run_flow(project, args.resource_id, args.env, args.dataset)
     if args.json:
         _emit_json(summary)
     return 0 if summary.failed == 0 else 1
@@ -71,6 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
     project_init = project_sub.add_parser("init")
     project_init.add_argument("--project-root", default=".")
     project_init.set_defaults(handler=_cmd_project_init)
+    project_import = project_sub.add_parser("import-openapi")
+    project_import.add_argument("--project-root", default=".")
+    project_import.add_argument("--source", required=True)
+    project_import.add_argument("--env-id", default="qa")
+    project_import.add_argument("--server-description", default=None)
+    project_import.add_argument("--server-url", default=None)
+    project_import.add_argument("--include-path", action="append", default=[])
+    project_import.set_defaults(handler=_cmd_project_import_openapi)
 
     validate_parser = sub.add_parser("validate")
     validate_parser.add_argument("--project-root", default=".")
@@ -82,8 +111,19 @@ def build_parser() -> argparse.ArgumentParser:
     api_send.add_argument("resource_id")
     api_send.add_argument("--project-root", default=".")
     api_send.add_argument("--env", default=None)
+    api_send.add_argument("--dataset", default=None)
     api_send.add_argument("--json", action="store_true")
     api_send.set_defaults(handler=_cmd_api_send)
+
+    flow_parser = sub.add_parser("flow")
+    flow_sub = flow_parser.add_subparsers(dest="action", required=True)
+    flow_run = flow_sub.add_parser("run")
+    flow_run.add_argument("resource_id")
+    flow_run.add_argument("--project-root", default=".")
+    flow_run.add_argument("--env", default=None)
+    flow_run.add_argument("--dataset", default=None)
+    flow_run.add_argument("--json", action="store_true")
+    flow_run.set_defaults(handler=_cmd_flow_run)
 
     suite_parser = sub.add_parser("suite")
     suite_sub = suite_parser.add_subparsers(dest="action", required=True)

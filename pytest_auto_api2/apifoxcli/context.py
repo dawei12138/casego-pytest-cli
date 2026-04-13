@@ -17,6 +17,7 @@ class PlanNode:
     resource_id: str
     env_id: str
     dataset: Dict[str, Any]
+    context_key: str
 
 
 @dataclass

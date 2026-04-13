@@ -12,6 +12,7 @@ class ProjectSpec(BaseModel):
 
 class EnvSpec(BaseModel):
     baseUrl: str
+    headers: Dict[str, str] = Field(default_factory=dict)
     variables: Dict[str, object] = Field(default_factory=dict)
 
 
