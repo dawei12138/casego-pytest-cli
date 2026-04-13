@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 casego = "pytest_auto_api2.cli:main"
+apifoxcli = "pytest_auto_api2.apifoxcli.cli:main"
 
 [tool.setuptools]
 py-modules = ["cli", "run"]
