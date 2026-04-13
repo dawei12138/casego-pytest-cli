@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectSpec(BaseModel):
@@ -16,11 +16,13 @@ class EnvSpec(BaseModel):
 
 
 class RequestSpec(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     method: str
     path: str
     headers: Dict[str, str] = Field(default_factory=dict)
     query: Optional[Dict[str, object]] = None
-    json: Optional[Dict[str, object]] = None
+    json_body: Optional[Dict[str, object]] = Field(default=None, alias="json")
     form: Optional[Dict[str, object]] = None
 
 

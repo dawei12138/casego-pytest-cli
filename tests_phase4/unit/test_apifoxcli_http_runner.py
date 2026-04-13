@@ -1,9 +1,16 @@
 import json
-from types import SimpleNamespace
 
 from pytest_auto_api2.apifoxcli.assertions import assert_response
 from pytest_auto_api2.apifoxcli.context import RunContext
 from pytest_auto_api2.apifoxcli.extractor import apply_extractors
+from pytest_auto_api2.apifoxcli.models import (
+    ApiResource,
+    ApiSpec,
+    AssertionSpec,
+    ExpectSpec,
+    ExtractSpec,
+    RequestSpec,
+)
 from pytest_auto_api2.apifoxcli.transport.http import execute_http_api
 
 
@@ -37,19 +44,20 @@ def test_execute_http_api_builds_request(monkeypatch):
 
     monkeypatch.setattr("pytest_auto_api2.apifoxcli.transport.http.requests.request", fake_request)
 
-    api = SimpleNamespace(
-        spec=SimpleNamespace(
-            request=SimpleNamespace(
+    api = ApiResource(
+        kind="api",
+        id="login",
+        name="Login",
+        spec=ApiSpec(
+            request=RequestSpec(
                 method="POST",
                 path="/login",
                 headers={"X-Tenant": "${env.tenant}"},
-                query=None,
                 json={"username": "${dataset.username}"},
-                form=None,
             ),
-            expect=SimpleNamespace(status=200, assertions=[]),
+            expect=ExpectSpec(status=200, assertions=[]),
             extract=[],
-        )
+        ),
     )
     context = RunContext(
         env={"baseUrl": "http://example.com", "variables": {"tenant": "qa"}},
@@ -67,15 +75,17 @@ def test_execute_http_api_builds_request(monkeypatch):
 def test_apply_extractors_writes_context_values():
     context = RunContext(env={"baseUrl": "http://example.com", "variables": {}}, dataset={})
     response = DummyResponse(payload={"data": {"token": "abc"}})
-    extractors = [SimpleNamespace(name="token", from_="response", expr="$.data.token")]
+    extractors = [ExtractSpec(name="token", expr="$.data.token", **{"from": "response"})]
     apply_extractors(extractors, response, context)
     assert context.values["token"] == "abc"
 
 
 def test_assert_response_checks_status_and_jsonpath():
     response = DummyResponse(payload={"errorCode": 0})
-    expect = SimpleNamespace(
+    expect = ExpectSpec(
         status=200,
-        assertions=[SimpleNamespace(id="errorCode", source="response", expr="$.errorCode", op="==", value=0)],
+        assertions=[
+            AssertionSpec(id="errorCode", source="response", expr="$.errorCode", op="==", value=0)
+        ],
     )
     assert_response(expect, response, context={})

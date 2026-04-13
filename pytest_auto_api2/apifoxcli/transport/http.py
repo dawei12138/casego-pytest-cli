@@ -13,7 +13,7 @@ def execute_http_api(api, context, timeout: int = 30):
 
     headers = resolve_value(request_spec.headers or {}, context)
     params = resolve_value(request_spec.query, context) if request_spec.query else None
-    json_body = resolve_value(request_spec.json, context) if request_spec.json else None
+    json_body = resolve_value(request_spec.json_body, context) if request_spec.json_body else None
     form_body = resolve_value(request_spec.form, context) if request_spec.form else None
 
     return requests.request(
