@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from pytest_auto_api2.apifoxcli.cli import build_parser, main
 from pytest_auto_api2.apifoxcli.loader import load_project
 
@@ -41,6 +43,12 @@ def test_build_parser_supports_case_and_source_commands():
     assert sync_args.apply is True
     assert status_args.action == "status"
     assert rebind_args.action == "rebind"
+
+
+def test_build_parser_rejects_source_sync_apply_and_plan_together():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["source", "sync", "demo-openapi", "--apply", "--plan"])
 
 
 def test_source_rebind_persists_source_spec_rebinds(tmp_path):
@@ -104,3 +112,131 @@ def test_source_status_failure_with_json_emits_structured_error(tmp_path, capsys
     assert payload["error"]["type"] == "FileNotFoundError"
     assert "no sync report found" in payload["error"]["message"]
     assert captured.err == ""
+
+
+def test_source_sync_default_mode_is_plan_only_without_report_write(tmp_path):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "paths": {
+                    "/ping": {
+                        "get": {
+                            "operationId": "ping_get",
+                            "tags": ["PingTag"],
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_source(root, source_url=str(source_path))
+
+    exit_code = main(["source", "sync", "demo-openapi", "--project-root", str(root)])
+
+    report_dir = root / "apifox" / "reports" / "sync"
+    assert exit_code == 0
+    assert not report_dir.exists() or list(report_dir.glob("*.yaml")) == []
+
+
+def test_source_sync_plan_flag_is_plan_only_without_report_write(tmp_path):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "paths": {
+                    "/ping": {
+                        "get": {
+                            "operationId": "ping_get",
+                            "tags": ["PingTag"],
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_source(root, source_url=str(source_path))
+
+    exit_code = main(["source", "sync", "demo-openapi", "--project-root", str(root), "--plan"])
+
+    report_dir = root / "apifox" / "reports" / "sync"
+    assert exit_code == 0
+    assert not report_dir.exists() or list(report_dir.glob("*.yaml")) == []
+
+
+def test_source_sync_prune_is_rejected_clearly(tmp_path, capsys):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(
+        json.dumps({"openapi": "3.0.3", "paths": {}}),
+        encoding="utf-8",
+    )
+    _write_source(root, source_url=str(source_path))
+
+    exit_code = main(["source", "sync", "demo-openapi", "--project-root", str(root), "--prune"])
+    stderr = capsys.readouterr().err
+
+    assert exit_code != 0
+    assert "--prune is not implemented" in stderr
+
+
+def test_project_import_openapi_loads_document_once(tmp_path, monkeypatch):
+    from pytest_auto_api2.apifoxcli import cli as cli_module
+
+    root = tmp_path / "demo"
+    assert cli_module.main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "servers": [{"url": "https://demo.example/dev-api", "description": "qa"}],
+                "paths": {
+                    "/ping": {
+                        "get": {
+                            "operationId": "ping_get",
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls = []
+    real_loader = cli_module.load_openapi_document
+
+    def _tracked_loader(source, *, root=None):
+        calls.append((source, root))
+        return real_loader(source, root=root)
+
+    monkeypatch.setattr(cli_module, "load_openapi_document", _tracked_loader)
+
+    exit_code = cli_module.main(
+        [
+            "project",
+            "import-openapi",
+            "--project-root",
+            str(root),
+            "--source",
+            str(source_path),
+            "--source-id",
+            "demo-openapi",
+            "--server-description",
+            "qa",
+        ]
+    )
+    assert exit_code == 0
+    assert len(calls) == 1

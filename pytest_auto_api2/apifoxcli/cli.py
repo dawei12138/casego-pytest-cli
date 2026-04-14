@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .loader import load_project
 from .openapi_importer import bootstrap_openapi_source, load_openapi_document
@@ -31,6 +31,7 @@ def _cmd_project_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_project_import_openapi(args: argparse.Namespace) -> int:
+    document = load_openapi_document(args.source)
     bootstrap_openapi_source(
         root=Path(args.project_root),
         source_id=args.source_id,
@@ -39,16 +40,38 @@ def _cmd_project_import_openapi(args: argparse.Namespace) -> int:
         server_description=args.server_description,
         server_url=args.server_url,
         include_paths=args.include_path,
+        document=document,
     )
-    sync_args = argparse.Namespace(
-        project_root=args.project_root,
-        resource_id=args.source_id,
+    return _run_source_sync(
+        project_root=Path(args.project_root),
+        source_id=args.source_id,
         apply=True,
-        plan=False,
         prune=False,
-        json=getattr(args, "json", False),
+        json_output=getattr(args, "json", False),
+        document=document,
     )
-    return _cmd_source_sync(sync_args)
+
+
+def _run_source_sync(
+    *,
+    project_root: Path,
+    source_id: str,
+    apply: bool,
+    prune: bool,
+    json_output: bool,
+    document: Optional[Dict[str, object]] = None,
+) -> int:
+    if prune:
+        raise NotImplementedError("source sync --prune is not implemented yet")
+    project = load_project(project_root)
+    source = project.sources[source_id]
+    loaded_document = document if document is not None else load_openapi_document(source.spec.url, root=project.root)
+    normalized = normalize_openapi_document(source, loaded_document)
+    plan = plan_source_sync(project, source_id, normalized)
+    report = apply_source_sync(project, source_id, plan) if apply else build_sync_report(project, source_id, plan)
+    if json_output:
+        _emit_json(report)
+    return 0
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -123,19 +146,13 @@ def _cmd_suite_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_source_sync(args: argparse.Namespace) -> int:
-    project = load_project(Path(args.project_root))
-    source = project.sources[args.resource_id]
-    document = load_openapi_document(source.spec.url)
-    normalized = normalize_openapi_document(source, document)
-    plan = plan_source_sync(project, args.resource_id, normalized)
-    report = (
-        apply_source_sync(project, args.resource_id, plan)
-        if args.apply
-        else build_sync_report(project, args.resource_id, plan)
+    return _run_source_sync(
+        project_root=Path(args.project_root),
+        source_id=args.resource_id,
+        apply=bool(args.apply),
+        prune=bool(getattr(args, "prune", False)),
+        json_output=bool(getattr(args, "json", False)),
     )
-    if args.json:
-        _emit_json(report)
-    return 0
 
 
 def _cmd_source_status(args: argparse.Namespace) -> int:
@@ -218,8 +235,9 @@ def build_parser() -> argparse.ArgumentParser:
     source_sync = source_sub.add_parser("sync")
     source_sync.add_argument("resource_id")
     source_sync.add_argument("--project-root", default=".")
-    source_sync.add_argument("--apply", action="store_true")
-    source_sync.add_argument("--plan", action="store_true")
+    source_sync_mode = source_sync.add_mutually_exclusive_group()
+    source_sync_mode.add_argument("--apply", action="store_true")
+    source_sync_mode.add_argument("--plan", action="store_true")
     source_sync.add_argument("--prune", action="store_true")
     source_sync.add_argument("--json", action="store_true")
     source_sync.set_defaults(handler=_cmd_source_sync)

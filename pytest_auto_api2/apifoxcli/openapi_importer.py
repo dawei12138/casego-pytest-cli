@@ -13,8 +13,8 @@ HTTP_METHODS = ("get", "post", "put", "delete", "patch", "options", "head")
 _OMIT = object()
 
 
-def load_openapi_document(source: str) -> Dict[str, Any]:
-    return _load_document(source)
+def load_openapi_document(source: str, *, root: Optional[Path] = None) -> Dict[str, Any]:
+    return _load_document(resolve_openapi_source_location(source, root=root))
 
 
 def select_openapi_server(
@@ -31,6 +31,27 @@ def resolve_openapi_base_url(server_url: str, source: str) -> str:
 
 def has_openapi_bearer_security(document: Dict[str, Any]) -> bool:
     return _has_bearer_security(document)
+
+
+def resolve_openapi_source_location(source: str, *, root: Optional[Path] = None) -> str:
+    if source.startswith(("http://", "https://")):
+        return source
+    raw = Path(source)
+    if raw.is_absolute():
+        return str(raw)
+    base = Path(root) if root is not None else Path.cwd()
+    return str((base / raw).resolve())
+
+
+def normalize_openapi_source_reference(root: Path, source: str) -> str:
+    if source.startswith(("http://", "https://")):
+        return source
+    resolved = Path(resolve_openapi_source_location(source))
+    project_root = Path(root).resolve()
+    try:
+        return resolved.relative_to(project_root).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 def iter_openapi_operations(
@@ -178,24 +199,26 @@ def bootstrap_openapi_source(
     server_description: Optional[str] = None,
     server_url: Optional[str] = None,
     include_paths: Optional[Iterable[str]] = None,
+    document: Optional[Dict[str, Any]] = None,
 ) -> None:
     project_root = Path(root)
     apifox = project_root / "apifox"
-    document = load_openapi_document(source)
-    selected_server = select_openapi_server(document, server_description, server_url)
+    normalized_source = normalize_openapi_source_reference(project_root, source)
+    loaded_document = document if document is not None else load_openapi_document(source)
+    selected_server = select_openapi_server(loaded_document, server_description, server_url)
     resolved_server_url = str(selected_server.get("url") or "")
     resolved_server_description = str(selected_server.get("description") or "") or None
-    base_url = resolve_openapi_base_url(resolved_server_url, source)
+    base_url = resolve_openapi_base_url(resolved_server_url, normalized_source)
 
-    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(document))
+    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(loaded_document))
     _write_source(
         apifox / "sources" / f"{source_id}.yaml",
         source_id=source_id,
-        source=source,
+        source=normalized_source,
         server_description=resolved_server_description,
         server_url=resolved_server_url or None,
         include_paths=list(include_paths or []),
-        tag_map=_infer_tag_map(document, include_paths=include_paths),
+        tag_map=_infer_tag_map(loaded_document, include_paths=include_paths),
     )
 
 
