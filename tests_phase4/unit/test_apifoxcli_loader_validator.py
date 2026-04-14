@@ -35,6 +35,19 @@ def test_loader_reads_canonical_resources(tmp_path):
     assert "user.login" in project.apis
 
 
+def test_loader_exposes_sources_and_cases_collections(tmp_path):
+    apifox = tmp_path / "apifox"
+    apifox.mkdir(parents=True)
+    (apifox / "project.yaml").write_text(
+        "kind: project\nid: default\nname: demo\nspec:\n  defaultEnv: qa\n",
+        encoding="utf-8",
+    )
+
+    project = load_project(tmp_path)
+    assert project.sources == {}
+    assert project.cases == {}
+
+
 def test_validator_rejects_missing_env_reference(tmp_path):
     apifox = tmp_path / "apifox"
     (apifox / "apis").mkdir(parents=True)

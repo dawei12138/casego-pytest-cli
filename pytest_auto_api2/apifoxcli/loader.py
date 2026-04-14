@@ -7,11 +7,13 @@ import yaml
 
 from .models import (
     ApiResource,
+    CaseResource,
     DatasetResource,
     EnvResource,
     FlowResource,
     LoadedProject,
     ProjectResource,
+    SourceResource,
     SuiteResource,
 )
 
@@ -35,12 +37,18 @@ def load_project(root: Path) -> LoadedProject:
     project = ProjectResource(**_read_yaml(apifox / "project.yaml"))
     loaded = LoadedProject(root=project_root, project=project)
 
+    for path in _iter_yaml_files(apifox / "sources"):
+        resource = SourceResource(**_read_yaml(path))
+        loaded.sources[resource.id] = resource
     for path in _iter_yaml_files(apifox / "envs"):
         resource = EnvResource(**_read_yaml(path))
         loaded.envs[resource.id] = resource
     for path in _iter_yaml_files(apifox / "apis"):
         resource = ApiResource(**_read_yaml(path))
         loaded.apis[resource.id] = resource
+    for path in _iter_yaml_files(apifox / "cases"):
+        resource = CaseResource(**_read_yaml(path))
+        loaded.cases[resource.id] = resource
     for path in _iter_yaml_files(apifox / "flows"):
         resource = FlowResource(**_read_yaml(path))
         loaded.flows[resource.id] = resource

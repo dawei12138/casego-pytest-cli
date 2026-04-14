@@ -5,7 +5,7 @@ from pathlib import Path
 
 def init_project(root: Path) -> None:
     apifox = root / "apifox"
-    for rel in ("envs", "apis", "flows", "suites", "datasets", "mocks"):
+    for rel in ("sources", "envs", "apis", "cases", "flows", "suites", "datasets", "mocks"):
         (apifox / rel).mkdir(parents=True, exist_ok=True)
 
     files = {
