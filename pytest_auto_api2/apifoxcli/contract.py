@@ -30,13 +30,21 @@ def validate_case_contract(case, api) -> List[str]:
 def build_case_request(case, api, context) -> PreparedRequest:
     request_contract = ((api.spec.contract or {}).get("request") or {})
     case_request = case.spec.request or {}
+    method = request_contract.get("method")
+    path = request_contract.get("path")
+    missing_fields = [name for name, value in (("method", method), ("path", path)) if not value]
+    if missing_fields:
+        missing = ", ".join(missing_fields)
+        raise ValueError(
+            f"missing contract request {missing} for case '{case.id}' and api '{api.id}'"
+        )
 
     headers = dict(context.env.get("headers") or {})
     headers.update(case_request.get("headers") or {})
 
     return PreparedRequest(
-        method=request_contract["method"],
-        path=request_contract["path"],
+        method=method,
+        path=path,
         headers=resolve_value(headers, context, missing="none"),
         query=resolve_value(case_request.get("query"), context) if case_request.get("query") else None,
         json_body=resolve_value(case_request.get("json"), context) if case_request.get("json") else None,
