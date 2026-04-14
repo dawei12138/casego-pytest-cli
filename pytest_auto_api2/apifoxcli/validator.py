@@ -47,14 +47,24 @@ def validate_project(project: LoadedProject) -> List[str]:
         _validate_supported_expressions(f"case {case.id}", case.spec.request, errors)
 
     for flow in project.flows.values():
-        for step in flow.spec.steps:
+        for step_index, step in enumerate(flow.spec.steps):
+            ref_count = int(bool(step.caseRef)) + int(bool(step.apiRef))
+            if ref_count != 1:
+                errors.append(
+                    f"flow {flow.id} step {step_index} must define exactly one of caseRef or apiRef"
+                )
             if step.caseRef and step.caseRef not in project.cases:
                 errors.append(f"flow {flow.id} caseRef not found: {step.caseRef}")
             if step.apiRef and step.apiRef not in project.apis:
                 errors.append(f"flow {flow.id} apiRef not found: {step.apiRef}")
 
     for suite in project.suites.values():
-        for item in suite.spec.items:
+        for item_index, item in enumerate(suite.spec.items):
+            ref_count = int(bool(item.caseRef)) + int(bool(item.apiRef)) + int(bool(item.flowRef))
+            if ref_count != 1:
+                errors.append(
+                    f"suite {suite.id} item {item_index} must define exactly one of caseRef, apiRef, or flowRef"
+                )
             if item.caseRef and item.caseRef not in project.cases:
                 errors.append(f"suite {suite.id} caseRef not found: {item.caseRef}")
             if item.apiRef and item.apiRef not in project.apis:

@@ -20,16 +20,52 @@ def _build_flow_nodes(
     context_key: str,
 ) -> List[PlanNode]:
     flow = project.flows[flow_id]
-    return [
-        PlanNode(
-            kind="api",
-            resource_id=step.apiRef,
-            env_id=env_id,
-            dataset=dict(dataset),
-            context_key=context_key,
-        )
-        for step in flow.spec.steps
-    ]
+    nodes: List[PlanNode] = []
+    for step in flow.spec.steps:
+        if step.caseRef:
+            nodes.append(
+                PlanNode(
+                    kind="case",
+                    resource_id=step.caseRef,
+                    env_id=env_id,
+                    dataset=dict(dataset),
+                    context_key=context_key,
+                )
+            )
+        elif step.apiRef:
+            nodes.append(
+                PlanNode(
+                    kind="api",
+                    resource_id=step.apiRef,
+                    env_id=env_id,
+                    dataset=dict(dataset),
+                    context_key=context_key,
+                )
+            )
+    return nodes
+
+
+def build_case_plan(
+    project: LoadedProject,
+    case_id: str,
+    env_override: Optional[str],
+    dataset_ref: Optional[str] = None,
+) -> ExecutionPlan:
+    case = project.cases[case_id]
+    env_id = env_override or case.spec.envRef or project.project.spec.defaultEnv
+    rows = _expand_dataset(project, dataset_ref or case.spec.datasetRef)
+    return ExecutionPlan(
+        nodes=[
+            PlanNode(
+                kind="case",
+                resource_id=case_id,
+                env_id=env_id,
+                dataset=row,
+                context_key=f"case:{case_id}:{row_index}",
+            )
+            for row_index, row in enumerate(rows)
+        ]
+    )
 
 
 def build_api_plan(
@@ -75,7 +111,18 @@ def build_suite_plan(project: LoadedProject, suite_id: str, env_override: Option
     nodes: List[PlanNode] = []
 
     for item_index, item in enumerate(suite.spec.items):
-        if item.apiRef:
+        if item.caseRef:
+            for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
+                nodes.append(
+                    PlanNode(
+                        kind="case",
+                        resource_id=item.caseRef,
+                        env_id=env_id,
+                        dataset=row,
+                        context_key=f"suite:{suite_id}:item:{item_index}:row:{row_index}:case",
+                    )
+                )
+        elif item.apiRef:
             for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
                 nodes.append(
                     PlanNode(

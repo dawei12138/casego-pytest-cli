@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from .loader import load_project
 from .openapi_importer import import_openapi_project
-from .runner import run_api, run_flow, run_suite
+from .runner import run_api, run_case, run_flow, run_suite
 from .scaffold import init_project
 from .validator import validate_project
 
@@ -67,6 +67,14 @@ def _cmd_api_send(args: argparse.Namespace) -> int:
     return 0 if summary.failed == 0 else 1
 
 
+def _cmd_case_run(args: argparse.Namespace) -> int:
+    project = load_project(Path(args.project_root))
+    summary = run_case(project, args.resource_id, args.env, args.dataset)
+    if args.json:
+        _emit_json(summary)
+    return 0 if summary.failed == 0 else 1
+
+
 def _cmd_flow_run(args: argparse.Namespace) -> int:
     project = load_project(Path(args.project_root))
     summary = run_flow(project, args.resource_id, args.env, args.dataset)
@@ -114,6 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
     api_send.add_argument("--dataset", default=None)
     api_send.add_argument("--json", action="store_true")
     api_send.set_defaults(handler=_cmd_api_send)
+
+    case_parser = sub.add_parser("case")
+    case_sub = case_parser.add_subparsers(dest="action", required=True)
+    case_run = case_sub.add_parser("run")
+    case_run.add_argument("resource_id")
+    case_run.add_argument("--project-root", default=".")
+    case_run.add_argument("--env", default=None)
+    case_run.add_argument("--dataset", default=None)
+    case_run.add_argument("--json", action="store_true")
+    case_run.set_defaults(handler=_cmd_case_run)
 
     flow_parser = sub.add_parser("flow")
     flow_sub = flow_parser.add_subparsers(dest="action", required=True)

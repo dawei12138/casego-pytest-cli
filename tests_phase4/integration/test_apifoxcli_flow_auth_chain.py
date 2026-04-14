@@ -49,7 +49,7 @@ class AuthChainHandler(BaseHTTPRequestHandler):
 
 def _write_auth_chain_project(root, port):
     apifox = root / "apifox"
-    for rel in ("envs", "apis", "flows", "suites", "datasets"):
+    for rel in ("envs", "apis", "cases", "flows", "suites", "datasets"):
         (apifox / rel).mkdir(parents=True, exist_ok=True)
 
     (apifox / "project.yaml").write_text(
@@ -61,15 +61,23 @@ def _write_auth_chain_project(root, port):
         encoding="utf-8",
     )
     (apifox / "apis" / "login.yaml").write_text(
-        "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    headers:\n      Content-Type: application/x-www-form-urlencoded\n    form:\n      username: ${dataset.username}\n      password: ${dataset.password}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+        "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  contract:\n    request:\n      method: POST\n      path: /login\n      contentType: application/x-www-form-urlencoded\n      formSchema:\n        username:\n          type: string\n          required: true\n        password:\n          type: string\n          required: true\n    responses:\n      '200': {}\n",
         encoding="utf-8",
     )
     (apifox / "apis" / "get-info.yaml").write_text(
-        "kind: api\nid: auth.get-info\nname: get info\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: GET\n    path: /getInfo\n  expect:\n    status: 200\n    assertions:\n      - id: user-name\n        source: response\n        expr: $.user.userName\n        op: ==\n        value: alice\n",
+        "kind: api\nid: auth.get-info\nname: get info\nspec:\n  protocol: http\n  envRef: qa\n  contract:\n    request:\n      method: GET\n      path: /getInfo\n      contentType: application/json\n    responses:\n      '200': {}\n",
+        encoding="utf-8",
+    )
+    (apifox / "cases" / "login-success.yaml").write_text(
+        "kind: case\nid: auth.login.success\nname: login success\nspec:\n  apiRef: auth.login\n  envRef: qa\n  request:\n    form:\n      username: ${dataset.username}\n      password: ${dataset.password}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+        encoding="utf-8",
+    )
+    (apifox / "cases" / "get-info.yaml").write_text(
+        "kind: case\nid: auth.get-info.smoke\nname: get info\nspec:\n  apiRef: auth.get-info\n  envRef: qa\n  request: {}\n  expect:\n    status: 200\n    assertions:\n      - id: user-name\n        source: response\n        expr: $.user.userName\n        op: ==\n        value: alice\n  extract: []\n",
         encoding="utf-8",
     )
     (apifox / "flows" / "bootstrap.yaml").write_text(
-        "kind: flow\nid: auth.bootstrap\nname: bootstrap\nspec:\n  envRef: qa\n  steps:\n    - apiRef: auth.login\n    - apiRef: auth.get-info\n",
+        "kind: flow\nid: auth.bootstrap\nname: bootstrap\nspec:\n  envRef: qa\n  steps:\n    - caseRef: auth.login.success\n    - caseRef: auth.get-info.smoke\n",
         encoding="utf-8",
     )
     (apifox / "datasets" / "users.yaml").write_text(

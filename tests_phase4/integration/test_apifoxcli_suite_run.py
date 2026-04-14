@@ -29,7 +29,7 @@ def test_suite_run_executes_canonical_yaml(tmp_path):
     try:
         root = tmp_path
         apifox = root / "apifox"
-        for rel in ("envs", "apis", "datasets", "suites"):
+        for rel in ("envs", "apis", "cases", "datasets", "suites"):
             (apifox / rel).mkdir(parents=True, exist_ok=True)
 
         (apifox / "project.yaml").write_text(
@@ -41,7 +41,11 @@ def test_suite_run_executes_canonical_yaml(tmp_path):
             encoding="utf-8",
         )
         (apifox / "apis" / "login.yaml").write_text(
-            "kind: api\nid: user.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    headers:\n      Content-Type: application/json\n    json:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions:\n      - id: errorCode\n        source: response\n        expr: $.errorCode\n        op: ==\n        value: 0\n      - id: username\n        source: response\n        expr: $.data.username\n        op: ==\n        value: alice\n",
+            "kind: api\nid: user.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  contract:\n    request:\n      method: POST\n      path: /login\n      contentType: application/json\n      bodySchema:\n        type: object\n        required:\n          - username\n    responses:\n      '200': {}\n",
+            encoding="utf-8",
+        )
+        (apifox / "cases" / "login.yaml").write_text(
+            "kind: case\nid: user.login.smoke\nname: login smoke\nspec:\n  apiRef: user.login\n  envRef: qa\n  request:\n    json:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions:\n      - id: errorCode\n        source: response\n        expr: $.errorCode\n        op: ==\n        value: 0\n      - id: username\n        source: response\n        expr: $.data.username\n        op: ==\n        value: alice\n  extract: []\n",
             encoding="utf-8",
         )
         (apifox / "datasets" / "users.yaml").write_text(
@@ -49,7 +53,7 @@ def test_suite_run_executes_canonical_yaml(tmp_path):
             encoding="utf-8",
         )
         (apifox / "suites" / "smoke.yaml").write_text(
-            "kind: suite\nid: smoke\nname: smoke\nspec:\n  envRef: qa\n  failFast: true\n  concurrency: 1\n  items:\n    - apiRef: user.login\n      datasetRef: user.rows\n",
+            "kind: suite\nid: smoke\nname: smoke\nspec:\n  envRef: qa\n  failFast: true\n  concurrency: 1\n  items:\n    - caseRef: user.login.smoke\n      datasetRef: user.rows\n",
             encoding="utf-8",
         )
 
