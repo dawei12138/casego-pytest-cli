@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
 
@@ -59,9 +60,21 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
         raise KeyError(f"source not found: {source_id}")
 
     root = project.root / "apifox"
+    apis_root = root / "apis"
+    api_paths_by_id, api_ids_by_path = index_api_files_by_id(apis_root)
     for item in [*plan.created, *plan.updated]:
         payload = render_api_resource(project, source_id, item)
-        write_api_resource(root / "apis", item.module, item.api_id, payload)
+        path = resolve_api_resource_path(apis_root, item.module, item.api_id, api_ids_by_path)
+        write_api_resource(path, payload)
+        remove_old_api_files_for_id(
+            apis_root,
+            item.api_id,
+            keep_path=path,
+            api_paths_by_id=api_paths_by_id,
+            api_ids_by_path=api_ids_by_path,
+        )
+        api_paths_by_id[item.api_id] = {path}
+        api_ids_by_path[path] = item.api_id
         project.apis[item.api_id] = ApiResource(**payload)
 
     for item in plan.upstream_removed:
@@ -82,7 +95,17 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
         sync_meta["lifecycle"] = "upstreamRemoved"
         meta["sync"] = sync_meta
         payload["meta"] = meta
-        write_api_resource(root / "apis", module, item.api_id, payload)
+        path = resolve_api_resource_path(apis_root, module, item.api_id, api_ids_by_path)
+        write_api_resource(path, payload)
+        remove_old_api_files_for_id(
+            apis_root,
+            item.api_id,
+            keep_path=path,
+            api_paths_by_id=api_paths_by_id,
+            api_ids_by_path=api_ids_by_path,
+        )
+        api_paths_by_id[item.api_id] = {path}
+        api_ids_by_path[path] = item.api_id
         project.apis[item.api_id] = ApiResource(**payload)
 
     report = build_sync_report(project, source_id, plan)
@@ -233,27 +256,102 @@ def render_api_resource(project: LoadedProject, source_id: str, item: SyncCandid
     return payload
 
 
-def write_api_resource(root: Path, module: str, api_id: str, payload: Dict[str, object]) -> Path:
-    module_name = module or "_default"
-    module_root = root / module_name
-    module_root.mkdir(parents=True, exist_ok=True)
-    path = _resolve_api_resource_path(module_root, module_name, api_id)
+def write_api_resource(path: Path, payload: Dict[str, object]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
 
 
-def _resolve_api_resource_path(module_root: Path, module_name: str, api_id: str) -> Path:
-    primary_stem = _build_api_file_stem(module_name, api_id)
-    primary_path = module_root / f"{primary_stem}.yaml"
-    if primary_path.exists():
-        return primary_path
+def resolve_api_resource_path(
+    apis_root: Path,
+    module_name: str,
+    api_id: str,
+    api_ids_by_path: Dict[Path, str],
+) -> Path:
+    normalized_module = module_name or "_default"
+    module_root = apis_root / normalized_module
+    base_stem = _build_api_file_stem(normalized_module, api_id)
+    candidate = module_root / f"{base_stem}.yaml"
+    if _path_available_for_api(candidate, api_id, api_ids_by_path):
+        return candidate
 
-    # Compatibility path for pre-Task5 filenames that only used the id leaf.
-    legacy_stem = api_id.split(".")[-1].replace("_", "-")
-    legacy_path = module_root / f"{legacy_stem}.yaml"
-    if legacy_path.exists():
-        return legacy_path
-    return primary_path
+    digest = hashlib.sha1(api_id.encode("utf-8")).hexdigest()[:8]
+    alt = module_root / f"{base_stem}-{digest}.yaml"
+    if _path_available_for_api(alt, api_id, api_ids_by_path):
+        return alt
+
+    index = 2
+    while True:
+        fallback = module_root / f"{base_stem}-{digest}-{index}.yaml"
+        if _path_available_for_api(fallback, api_id, api_ids_by_path):
+            return fallback
+        index += 1
+
+
+def index_api_files_by_id(apis_root: Path) -> Tuple[Dict[str, Set[Path]], Dict[Path, str]]:
+    api_paths_by_id: Dict[str, Set[Path]] = {}
+    api_ids_by_path: Dict[Path, str] = {}
+    if not apis_root.exists():
+        return api_paths_by_id, api_ids_by_path
+    for file_path in sorted(apis_root.rglob("*.yaml")):
+        api_id = _read_api_id_from_yaml(file_path)
+        if not api_id:
+            continue
+        api_ids_by_path[file_path] = api_id
+        api_paths_by_id.setdefault(api_id, set()).add(file_path)
+    return api_paths_by_id, api_ids_by_path
+
+
+def remove_old_api_files_for_id(
+    apis_root: Path,
+    api_id: str,
+    *,
+    keep_path: Path,
+    api_paths_by_id: Dict[str, Set[Path]],
+    api_ids_by_path: Dict[Path, str],
+) -> None:
+    old_paths = sorted(api_paths_by_id.get(api_id, set()))
+    for old_path in old_paths:
+        if old_path == keep_path:
+            continue
+        if old_path.exists():
+            old_path.unlink()
+            _prune_empty_parents(old_path.parent, stop_dir=apis_root)
+        api_ids_by_path.pop(old_path, None)
+    api_paths_by_id[api_id] = {keep_path}
+
+
+def _path_available_for_api(path: Path, api_id: str, api_ids_by_path: Dict[Path, str]) -> bool:
+    existing_id = api_ids_by_path.get(path)
+    if existing_id:
+        return existing_id == api_id
+    if not path.exists():
+        return True
+    file_api_id = _read_api_id_from_yaml(path)
+    if not file_api_id:
+        return False
+    api_ids_by_path[path] = file_api_id
+    return file_api_id == api_id
+
+
+def _read_api_id_from_yaml(path: Path) -> Optional[str]:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("id")
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _prune_empty_parents(path: Path, *, stop_dir: Path) -> None:
+    current = path
+    while current != stop_dir and current.exists():
+        if any(current.iterdir()):
+            break
+        current.rmdir()
+        current = current.parent
 
 
 def _build_api_file_stem(module_name: str, api_id: str) -> str:

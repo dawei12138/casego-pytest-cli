@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, TYPE_CHECKING
+from uuid import uuid4
 
 import yaml
 
@@ -52,7 +53,8 @@ def build_sync_report(_project: LoadedProject, source_id: str, plan: SyncPlan) -
 
 def write_sync_report(root: Path, report: SyncReport) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    file_name = f"{report.source_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yaml"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    file_name = f"{report.source_id}-{stamp}-{uuid4().hex[:8]}.yaml"
     path = root / file_name
     path.write_text(yaml.safe_dump(report.to_payload(), allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
