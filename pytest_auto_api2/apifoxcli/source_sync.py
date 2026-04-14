@@ -225,10 +225,6 @@ def analyze_sync_impact(project: LoadedProject, plan: SyncPlan) -> SyncImpact:
     impacted_case_ids: Set[str] = set()
     for case_id in sorted(case_reasons):
         reasons = case_reasons[case_id]
-        case = project.cases.get(case_id)
-        if case is None:
-            continue
-        _mark_case_audit_impacted(case, reasons)
         case_entries.append({"caseId": case_id, "reasons": deepcopy(reasons)})
         impacted_case_ids.add(case_id)
 
@@ -270,17 +266,6 @@ def _append_unique_reasons(existing: List[Dict[str, object]], new_reasons: List[
             existing.append(deepcopy(reason))
 
 
-def _mark_case_audit_impacted(case, reasons: List[Dict[str, object]]) -> None:
-    meta = case.meta if isinstance(case.meta, dict) else {}
-    audit = meta.get("audit")
-    if not isinstance(audit, dict):
-        audit = {}
-    audit["status"] = "impacted"
-    audit["reasons"] = deepcopy(reasons)
-    meta["audit"] = audit
-    case.meta = meta
-
-
 def _persist_impacted_case_audit(cases_root: Path, project: LoadedProject, impact: SyncImpact) -> None:
     if not impact.cases:
         return
@@ -289,12 +274,32 @@ def _persist_impacted_case_audit(cases_root: Path, project: LoadedProject, impac
         case_id = entry.get("caseId")
         if not isinstance(case_id, str):
             continue
-        case = project.cases.get(case_id)
         case_path = case_paths_by_id.get(case_id)
-        if case is None or case_path is None:
+        if case_path is None:
             continue
-        payload = case.model_dump(by_alias=True, exclude_none=True)
+        try:
+            payload = yaml.safe_load(case_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        meta = payload.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        audit = meta.get("audit")
+        if not isinstance(audit, dict):
+            audit = {}
+        audit["status"] = "impacted"
+        audit["reasons"] = deepcopy(entry.get("reasons") if isinstance(entry.get("reasons"), list) else [])
+        meta["audit"] = audit
+        payload["meta"] = meta
         case_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+        case = project.cases.get(case_id)
+        if case is not None:
+            case_meta = case.meta if isinstance(case.meta, dict) else {}
+            case_meta["audit"] = deepcopy(audit)
+            case.meta = case_meta
 
 
 def _collect_prunable_upstream_removed_api_ids(project: LoadedProject, plan: SyncPlan) -> Set[str]:

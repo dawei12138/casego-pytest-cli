@@ -13,15 +13,6 @@ def _validate_supported_expressions(owner: str, value, errors: List[str]) -> Non
         if not token.startswith(SUPPORTED_PREFIXES):
             errors.append(f"{owner} unsupported expression: {token}")
 
-
-def _case_audit_status(case) -> str:
-    audit = (case.meta or {}).get("audit")
-    if not isinstance(audit, dict):
-        return ""
-    status = audit.get("status")
-    return status if isinstance(status, str) else ""
-
-
 def validate_project(project: LoadedProject) -> List[str]:
     errors: List[str] = []
 
@@ -46,11 +37,6 @@ def validate_project(project: LoadedProject) -> List[str]:
                 _validate_supported_expressions(f"api {api.id}", field_value, errors)
 
     for case in project.cases.values():
-        audit_status = _case_audit_status(case)
-        if audit_status == "impacted":
-            # Impacted audit is informational; references still must validate below.
-            pass
-
         if case.spec.apiRef not in project.apis:
             errors.append(f"case {case.id} apiRef not found: {case.spec.apiRef}")
 
