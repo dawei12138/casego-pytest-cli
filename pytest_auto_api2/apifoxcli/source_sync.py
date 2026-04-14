@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+import yaml
 
 from .models import ApiResource, LoadedProject, SourceResource
 from .openapi_importer import (
@@ -12,6 +16,7 @@ from .openapi_importer import (
     path_segments,
     slug_segment,
 )
+from .sync_report import SyncReport, build_sync_report, write_sync_report
 
 
 @dataclass
@@ -47,6 +52,42 @@ class SyncPlan:
     updated: List[SyncCandidate] = field(default_factory=list)
     upstream_removed: List[SyncCandidate] = field(default_factory=list)
     unchanged: List[SyncCandidate] = field(default_factory=list)
+
+
+def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) -> SyncReport:
+    if source_id not in project.sources:
+        raise KeyError(f"source not found: {source_id}")
+
+    root = project.root / "apifox"
+    for item in [*plan.created, *plan.updated]:
+        payload = render_api_resource(project, source_id, item)
+        write_api_resource(root / "apis", item.module, item.api_id, payload)
+        project.apis[item.api_id] = ApiResource(**payload)
+
+    for item in plan.upstream_removed:
+        api = project.apis.get(item.api_id)
+        if api is None:
+            continue
+        payload = api.model_dump(by_alias=True, exclude_none=True)
+        meta = payload.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        module = str(meta.get("module") or item.module or "_default")
+        sync_meta = meta.get("sync")
+        if not isinstance(sync_meta, dict):
+            sync_meta = {}
+        sync_meta["sourceId"] = source_id
+        if item.sync_key:
+            sync_meta.setdefault("syncKey", item.sync_key)
+        sync_meta["lifecycle"] = "upstreamRemoved"
+        meta["sync"] = sync_meta
+        payload["meta"] = meta
+        write_api_resource(root / "apis", module, item.api_id, payload)
+        project.apis[item.api_id] = ApiResource(**payload)
+
+    report = build_sync_report(project, source_id, plan)
+    write_sync_report(root / "reports" / "sync", report)
+    return report
 
 
 def normalize_openapi_document(source: SourceResource, document: Dict[str, object]) -> List[NormalizedOperation]:
@@ -142,6 +183,64 @@ def plan_source_sync(
             )
         )
     return plan
+
+
+def render_api_resource(project: LoadedProject, source_id: str, item: SyncCandidate) -> Dict[str, object]:
+    existing = project.apis.get(item.api_id)
+    if existing is not None:
+        payload: Dict[str, object] = existing.model_dump(by_alias=True, exclude_none=True)
+    else:
+        payload = {
+            "kind": "api",
+            "id": item.api_id,
+            "name": item.api_id.split(".")[-1],
+            "meta": {},
+            "spec": {"protocol": "http"},
+        }
+
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    module = item.module or str(meta.get("module") or "_default")
+    meta["module"] = module
+
+    sync_meta = meta.get("sync")
+    if not isinstance(sync_meta, dict):
+        sync_meta = {}
+    sync_meta["sourceId"] = source_id
+    sync_meta["syncKey"] = item.sync_key
+    request = (item.contract or {}).get("request")
+    if isinstance(request, dict):
+        method = request.get("method")
+        path = request.get("path")
+        if method:
+            sync_meta["upstreamMethod"] = str(method).upper()
+        if path:
+            sync_meta["upstreamPath"] = str(path)
+    sync_meta["lifecycle"] = "active"
+    meta["sync"] = sync_meta
+    payload["meta"] = meta
+
+    spec = payload.get("spec")
+    if not isinstance(spec, dict):
+        spec = {}
+    spec["protocol"] = spec.get("protocol") or "http"
+    spec["contract"] = deepcopy(item.contract)
+    payload["spec"] = spec
+    payload["kind"] = "api"
+    payload["id"] = item.api_id
+    payload["name"] = str(payload.get("name") or item.api_id.split(".")[-1])
+    return payload
+
+
+def write_api_resource(root: Path, module: str, api_id: str, payload: Dict[str, object]) -> Path:
+    module_name = module or "_default"
+    module_root = root / module_name
+    module_root.mkdir(parents=True, exist_ok=True)
+    file_name = api_id.split(".")[-1].replace("_", "-")
+    path = module_root / f"{file_name}.yaml"
+    path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
 
 
 def diff_api_contract(local_contract: Dict[str, object], upstream_contract: Dict[str, object]) -> List[SyncDiff]:
