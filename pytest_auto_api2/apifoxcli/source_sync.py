@@ -60,7 +60,7 @@ def normalize_openapi_document(source: SourceResource, document: Dict[str, objec
         module = _resolve_module(tags, source.spec.tagMap)
         operations.append(
             NormalizedOperation(
-                api_id=_build_api_id(module, path),
+                api_id=_build_api_id(module, method, path),
                 module=module,
                 sync_key=build_openapi_sync_key(method, path, operation),
                 method=method.upper(),
@@ -87,16 +87,7 @@ def plan_source_sync(
         if ((api.meta or {}).get("sync") or {}).get("sourceId") == source_id
     }
     by_id = dict(local_apis)
-    by_sync_key: Dict[str, ApiResource] = {}
-    by_method_path: Dict[Tuple[str, str], ApiResource] = {}
-    for api in local_apis.values():
-        sync_meta = (api.meta or {}).get("sync") or {}
-        sync_key = sync_meta.get("syncKey")
-        if sync_key and sync_key not in by_sync_key:
-            by_sync_key[sync_key] = api
-        method_path = _api_method_path(api)
-        if method_path and method_path not in by_method_path:
-            by_method_path[method_path] = api
+    by_sync_key, by_method_path = _index_local_apis(local_apis, source_id)
 
     plan = SyncPlan()
     seen_api_ids = set()
@@ -131,7 +122,7 @@ def plan_source_sync(
         target.append(
             SyncCandidate(
                 api_id=local_api.id,
-                module=(local_api.meta or {}).get("module", operation.module),
+                module=operation.module,
                 sync_key=operation.sync_key,
                 contract=operation.contract,
                 diffs=diffs,
@@ -214,10 +205,52 @@ def _resolve_module(tags: List[str], tag_map: Dict[str, str]) -> str:
     return "_default"
 
 
-def _build_api_id(module: str, path: str) -> str:
+def _build_api_id(module: str, method: str, path: str) -> str:
+    method_segment = slug_segment(method)
     segments = path_segments(path)
     api_leaf = ".".join(segments) if segments else "root"
-    return f"{module}.{api_leaf}"
+    return f"{module}.{method_segment}.{api_leaf}"
+
+
+def _index_local_apis(
+    local_apis: Dict[str, ApiResource], source_id: str
+) -> Tuple[Dict[str, ApiResource], Dict[Tuple[str, str], ApiResource]]:
+    by_sync_key: Dict[str, ApiResource] = {}
+    by_method_path: Dict[Tuple[str, str], ApiResource] = {}
+    duplicate_sync_keys: Dict[str, List[str]] = {}
+    duplicate_method_paths: Dict[Tuple[str, str], List[str]] = {}
+
+    for api in sorted(local_apis.values(), key=lambda item: item.id):
+        sync_meta = (api.meta or {}).get("sync") or {}
+        sync_key = sync_meta.get("syncKey")
+        if sync_key:
+            if sync_key in by_sync_key:
+                duplicate_sync_keys.setdefault(sync_key, [by_sync_key[sync_key].id]).append(api.id)
+            else:
+                by_sync_key[sync_key] = api
+
+        method_path = _api_method_path(api)
+        if method_path:
+            if method_path in by_method_path:
+                duplicate_method_paths.setdefault(method_path, [by_method_path[method_path].id]).append(api.id)
+            else:
+                by_method_path[method_path] = api
+
+    if duplicate_sync_keys:
+        detail = "; ".join(
+            f"{sync_key} ({', '.join(sorted(set(api_ids)))})"
+            for sync_key, api_ids in sorted(duplicate_sync_keys.items())
+        )
+        raise ValueError(f"duplicate local sync key for source '{source_id}': {detail}")
+
+    if duplicate_method_paths:
+        detail = "; ".join(
+            f"{method} {path} ({', '.join(sorted(set(api_ids)))})"
+            for (method, path), api_ids in sorted(duplicate_method_paths.items())
+        )
+        raise ValueError(f"duplicate local method+path for source '{source_id}': {detail}")
+
+    return by_sync_key, by_method_path
 
 
 def _match_via_rebind(
