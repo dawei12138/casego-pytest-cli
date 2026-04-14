@@ -237,10 +237,33 @@ def write_api_resource(root: Path, module: str, api_id: str, payload: Dict[str, 
     module_name = module or "_default"
     module_root = root / module_name
     module_root.mkdir(parents=True, exist_ok=True)
-    file_name = api_id.split(".")[-1].replace("_", "-")
-    path = module_root / f"{file_name}.yaml"
+    path = _resolve_api_resource_path(module_root, module_name, api_id)
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
+
+
+def _resolve_api_resource_path(module_root: Path, module_name: str, api_id: str) -> Path:
+    primary_stem = _build_api_file_stem(module_name, api_id)
+    primary_path = module_root / f"{primary_stem}.yaml"
+    if primary_path.exists():
+        return primary_path
+
+    # Compatibility path for pre-Task5 filenames that only used the id leaf.
+    legacy_stem = api_id.split(".")[-1].replace("_", "-")
+    legacy_path = module_root / f"{legacy_stem}.yaml"
+    if legacy_path.exists():
+        return legacy_path
+    return primary_path
+
+
+def _build_api_file_stem(module_name: str, api_id: str) -> str:
+    prefix = f"{module_name}."
+    if module_name and api_id.startswith(prefix):
+        suffix = api_id[len(prefix) :]
+    else:
+        suffix = api_id
+    stem = suffix.replace(".", "-").replace("_", "-").strip("-")
+    return stem or "api"
 
 
 def diff_api_contract(local_contract: Dict[str, object], upstream_contract: Dict[str, object]) -> List[SyncDiff]:
