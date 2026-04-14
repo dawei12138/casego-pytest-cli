@@ -55,11 +55,31 @@ class SyncPlan:
     unchanged: List[SyncCandidate] = field(default_factory=list)
 
 
-def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) -> SyncReport:
+@dataclass
+class SyncImpact:
+    cases: List[Dict[str, object]] = field(default_factory=list)
+    flows: List[Dict[str, object]] = field(default_factory=list)
+    suites: List[Dict[str, object]] = field(default_factory=list)
+
+
+def apply_source_sync(
+    project: LoadedProject,
+    source_id: str,
+    plan: SyncPlan,
+    *,
+    prune: bool = False,
+) -> SyncReport:
     if source_id not in project.sources:
         raise KeyError(f"source not found: {source_id}")
 
     root = project.root / "apifox"
+    source = project.sources[source_id]
+    impact = analyze_sync_impact(project, plan)
+    prune_api_ids = set()
+    if prune:
+        prune_api_ids = _collect_prunable_upstream_removed_api_ids(project, plan)
+        _enforce_prune_guards(source, plan, prune_api_ids)
+
     apis_root = root / "apis"
     api_paths_by_id, api_ids_by_path = index_api_files_by_id(apis_root)
     enforce_api_id_source_ownership(project, source_id, plan, index_api_source_owners(apis_root))
@@ -79,6 +99,15 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
         project.apis[item.api_id] = ApiResource(**payload)
 
     for item in plan.upstream_removed:
+        if item.api_id in prune_api_ids:
+            remove_all_api_files_for_id(
+                apis_root,
+                item.api_id,
+                api_paths_by_id=api_paths_by_id,
+                api_ids_by_path=api_ids_by_path,
+            )
+            project.apis.pop(item.api_id, None)
+            continue
         api = project.apis.get(item.api_id)
         if api is None:
             continue
@@ -109,7 +138,14 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
         api_ids_by_path[path] = item.api_id
         project.apis[item.api_id] = ApiResource(**payload)
 
-    report = build_sync_report(project, source_id, plan)
+    _persist_impacted_case_audit(root / "cases", project, impact)
+    report = build_sync_report(
+        project,
+        source_id,
+        plan,
+        impact=impact,
+        pruned_api_ids=sorted(prune_api_ids),
+    )
     write_sync_report(root / "reports" / "sync", report)
     return report
 
@@ -171,6 +207,137 @@ def enforce_api_id_source_ownership(
                 f"source ownership conflict for api_id '{api_id}': "
                 f"owned by source(s) [{owner_list}], cannot sync source '{source_id}'"
             )
+
+
+def analyze_sync_impact(project: LoadedProject, plan: SyncPlan) -> SyncImpact:
+    case_reasons: Dict[str, List[Dict[str, object]]] = {}
+    for item in plan.updated:
+        reasons = _build_case_impact_reasons(item.diffs)
+        if not reasons:
+            continue
+        for case in project.cases.values():
+            if case.spec.apiRef != item.api_id:
+                continue
+            case_reasons.setdefault(case.id, [])
+            _append_unique_reasons(case_reasons[case.id], reasons)
+
+    case_entries: List[Dict[str, object]] = []
+    impacted_case_ids: Set[str] = set()
+    for case_id in sorted(case_reasons):
+        reasons = case_reasons[case_id]
+        case = project.cases.get(case_id)
+        if case is None:
+            continue
+        _mark_case_audit_impacted(case, reasons)
+        case_entries.append({"caseId": case_id, "reasons": deepcopy(reasons)})
+        impacted_case_ids.add(case_id)
+
+    impacted_flow_ids: Set[str] = set()
+    flow_entries: List[Dict[str, object]] = []
+    for flow in sorted(project.flows.values(), key=lambda item: item.id):
+        case_refs = {step.caseRef for step in flow.spec.steps if step.caseRef}
+        if case_refs & impacted_case_ids:
+            impacted_flow_ids.add(flow.id)
+            flow_entries.append({"flowId": flow.id})
+
+    suite_entries: List[Dict[str, object]] = []
+    for suite in sorted(project.suites.values(), key=lambda item: item.id):
+        has_impact = False
+        for item in suite.spec.items:
+            if item.caseRef and item.caseRef in impacted_case_ids:
+                has_impact = True
+                break
+            if item.flowRef and item.flowRef in impacted_flow_ids:
+                has_impact = True
+                break
+        if has_impact:
+            suite_entries.append({"suiteId": suite.id})
+
+    return SyncImpact(cases=case_entries, flows=flow_entries, suites=suite_entries)
+
+
+def _build_case_impact_reasons(diffs: List[SyncDiff]) -> List[Dict[str, object]]:
+    reasons: List[Dict[str, object]] = []
+    for diff in diffs:
+        if diff.kind == "request.requiredAdded":
+            reasons.append({"type": "missing_required_input", "field": diff.field})
+    return reasons
+
+
+def _append_unique_reasons(existing: List[Dict[str, object]], new_reasons: List[Dict[str, object]]) -> None:
+    for reason in new_reasons:
+        if reason not in existing:
+            existing.append(deepcopy(reason))
+
+
+def _mark_case_audit_impacted(case, reasons: List[Dict[str, object]]) -> None:
+    meta = case.meta if isinstance(case.meta, dict) else {}
+    audit = meta.get("audit")
+    if not isinstance(audit, dict):
+        audit = {}
+    audit["status"] = "impacted"
+    audit["reasons"] = deepcopy(reasons)
+    meta["audit"] = audit
+    case.meta = meta
+
+
+def _persist_impacted_case_audit(cases_root: Path, project: LoadedProject, impact: SyncImpact) -> None:
+    if not impact.cases:
+        return
+    case_paths_by_id = index_resource_files_by_id(cases_root)
+    for entry in impact.cases:
+        case_id = entry.get("caseId")
+        if not isinstance(case_id, str):
+            continue
+        case = project.cases.get(case_id)
+        case_path = case_paths_by_id.get(case_id)
+        if case is None or case_path is None:
+            continue
+        payload = case.model_dump(by_alias=True, exclude_none=True)
+        case_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _collect_prunable_upstream_removed_api_ids(project: LoadedProject, plan: SyncPlan) -> Set[str]:
+    referenced_api_ids = _collect_referenced_api_ids(project)
+    return {item.api_id for item in plan.upstream_removed if item.api_id not in referenced_api_ids}
+
+
+def _collect_referenced_api_ids(project: LoadedProject) -> Set[str]:
+    referenced: Set[str] = set()
+    for case in project.cases.values():
+        if case.spec.apiRef:
+            referenced.add(case.spec.apiRef)
+    for flow in project.flows.values():
+        for step in flow.spec.steps:
+            if step.apiRef:
+                referenced.add(step.apiRef)
+    for suite in project.suites.values():
+        for item in suite.spec.items:
+            if item.apiRef:
+                referenced.add(item.apiRef)
+    return referenced
+
+
+def _enforce_prune_guards(source: SourceResource, plan: SyncPlan, prune_api_ids: Set[str]) -> None:
+    prune_count = len(prune_api_ids)
+    if prune_count == 0:
+        return
+
+    max_remove_count = int(source.spec.guards.maxRemoveCount)
+    if max_remove_count >= 0 and prune_count > max_remove_count:
+        raise ValueError(
+            f"prune guard exceeded: remove count {prune_count} exceeds maxRemoveCount {max_remove_count}"
+        )
+
+    managed_existing = len(plan.updated) + len(plan.unchanged) + len(plan.upstream_removed)
+    if managed_existing <= 0:
+        return
+    remove_ratio = prune_count / managed_existing
+    max_remove_ratio = float(source.spec.guards.maxRemoveRatio)
+    if remove_ratio > max_remove_ratio:
+        raise ValueError(
+            f"prune guard exceeded: remove ratio {remove_ratio:.3f} exceeds maxRemoveRatio {max_remove_ratio}"
+        )
 
 
 def normalize_openapi_document(source: SourceResource, document: Dict[str, object]) -> List[NormalizedOperation]:
@@ -384,6 +551,33 @@ def index_api_source_owners(apis_root: Path) -> Dict[str, Set[str]]:
     return owners_by_id
 
 
+def index_resource_files_by_id(root: Path) -> Dict[str, Path]:
+    paths_by_id: Dict[str, Path] = {}
+    if not root.exists():
+        return paths_by_id
+    for file_path in sorted(root.rglob("*.yaml")):
+        resource_id = _read_resource_id_from_yaml(file_path)
+        if resource_id:
+            paths_by_id.setdefault(resource_id, file_path)
+    return paths_by_id
+
+
+def remove_all_api_files_for_id(
+    apis_root: Path,
+    api_id: str,
+    *,
+    api_paths_by_id: Dict[str, Set[Path]],
+    api_ids_by_path: Dict[Path, str],
+) -> None:
+    old_paths = sorted(api_paths_by_id.get(api_id, set()))
+    for old_path in old_paths:
+        if old_path.exists():
+            old_path.unlink()
+            _prune_empty_parents(old_path.parent, stop_dir=apis_root)
+        api_ids_by_path.pop(old_path, None)
+    api_paths_by_id.pop(api_id, None)
+
+
 def remove_old_api_files_for_id(
     apis_root: Path,
     api_id: str,
@@ -419,6 +613,19 @@ def _path_available_for_api(path: Path, api_id: str, api_ids_by_path: Dict[Path,
 def _read_api_id_from_yaml(path: Path) -> Optional[str]:
     api_id, _ = _read_api_identity_from_yaml(path)
     return api_id
+
+
+def _read_resource_id_from_yaml(path: Path) -> Optional[str]:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("id")
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 def _read_api_identity_from_yaml(path: Path) -> Tuple[Optional[str], Optional[str]]:
@@ -493,6 +700,7 @@ def diff_api_contract(local_contract: Dict[str, object], upstream_contract: Dict
 
     diffs.extend(_diff_required_fields(local_request.get("formSchema"), upstream_request.get("formSchema")))
     diffs.extend(_diff_required_fields(local_request.get("jsonSchema"), upstream_request.get("jsonSchema")))
+    diffs.extend(_diff_required_fields(local_request.get("querySchema"), upstream_request.get("querySchema")))
     return diffs
 
 

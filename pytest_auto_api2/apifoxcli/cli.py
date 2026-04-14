@@ -62,14 +62,18 @@ def _run_source_sync(
     json_output: bool,
     document: Optional[Dict[str, object]] = None,
 ) -> int:
-    if prune:
-        raise NotImplementedError("source sync --prune is not implemented yet")
+    if prune and not apply:
+        raise ValueError("source sync --prune requires --apply")
     project = load_project(project_root)
     source = project.sources[source_id]
     loaded_document = document if document is not None else load_openapi_document(source.spec.url, root=project.root)
     normalized = normalize_openapi_document(source, loaded_document)
     plan = plan_source_sync(project, source_id, normalized)
-    report = apply_source_sync(project, source_id, plan) if apply else build_sync_report(project, source_id, plan)
+    report = (
+        apply_source_sync(project, source_id, plan, prune=prune)
+        if apply
+        else build_sync_report(project, source_id, plan)
+    )
     if json_output:
         _emit_json(report)
     return 0

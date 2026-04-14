@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import uuid4
 
 import yaml
@@ -33,7 +33,18 @@ class SyncReport:
         }
 
 
-def build_sync_report(_project: LoadedProject, source_id: str, plan: SyncPlan) -> SyncReport:
+def build_sync_report(
+    _project: LoadedProject,
+    source_id: str,
+    plan: SyncPlan,
+    *,
+    impact: Optional[object] = None,
+    pruned_api_ids: Optional[List[str]] = None,
+) -> SyncReport:
+    impact_cases = list(getattr(impact, "cases", []) or [])
+    impact_flows = list(getattr(impact, "flows", []) or [])
+    impact_suites = list(getattr(impact, "suites", []) or [])
+    pruned_api_ids = pruned_api_ids or []
     return SyncReport(
         source_id=source_id,
         summary={
@@ -41,12 +52,27 @@ def build_sync_report(_project: LoadedProject, source_id: str, plan: SyncPlan) -
             "updatedApis": len(plan.updated),
             "upstreamRemovedApis": len(plan.upstream_removed),
             "unchangedApis": len(plan.unchanged),
+            "impactedCases": len(impact_cases),
+            "impactedFlows": len(impact_flows),
+            "impactedSuites": len(impact_suites),
+            "prunedApis": len(pruned_api_ids),
         },
         details={
             "createdApis": [item.api_id for item in plan.created],
             "updatedApis": [item.api_id for item in plan.updated],
             "upstreamRemovedApis": [item.api_id for item in plan.upstream_removed],
             "unchangedApis": [item.api_id for item in plan.unchanged],
+            "impactedCases": [entry["caseId"] for entry in impact_cases if isinstance(entry.get("caseId"), str)],
+            "impactedFlows": [entry["flowId"] for entry in impact_flows if isinstance(entry.get("flowId"), str)],
+            "impactedSuites": [
+                entry["suiteId"] for entry in impact_suites if isinstance(entry.get("suiteId"), str)
+            ],
+            "prunedApis": list(pruned_api_ids),
+        },
+        impacts={
+            "cases": impact_cases,
+            "flows": impact_flows,
+            "suites": impact_suites,
         },
     )
 

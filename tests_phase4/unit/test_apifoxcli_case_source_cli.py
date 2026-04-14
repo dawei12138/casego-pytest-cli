@@ -6,7 +6,14 @@ from pytest_auto_api2.apifoxcli.cli import build_parser, main
 from pytest_auto_api2.apifoxcli.loader import load_project
 
 
-def _write_source(root, source_id="demo-openapi", source_url="https://demo.example/openapi.json"):
+def _write_source(
+    root,
+    source_id="demo-openapi",
+    source_url="https://demo.example/openapi.json",
+    *,
+    max_remove_count=20,
+    max_remove_ratio=0.2,
+):
     source_path = root / "apifox" / "sources" / f"{source_id}.yaml"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text(
@@ -22,11 +29,39 @@ spec:
   tagMap: {{}}
   rebinds: {{}}
   guards:
-    maxRemoveCount: 20
-    maxRemoveRatio: 0.2
+    maxRemoveCount: {max_remove_count}
+    maxRemoveRatio: {max_remove_ratio}
 """,
         encoding="utf-8",
     )
+
+
+def _write_synced_api(root, api_id="auth.get.stale", sync_key="stale_get", path="/stale"):
+    api_path = root / "apifox" / "apis" / "auth" / "stale.yaml"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        f"""kind: api
+id: {api_id}
+name: stale
+meta:
+  module: auth
+  sync:
+    sourceId: demo-openapi
+    syncKey: {sync_key}
+    lifecycle: active
+spec:
+  protocol: http
+  contract:
+    request:
+      method: GET
+      path: {path}
+      contentType: application/json
+    responses:
+      '200': {{}}
+""",
+        encoding="utf-8",
+    )
+    return api_path
 
 
 def test_build_parser_supports_case_and_source_commands():
@@ -174,7 +209,7 @@ def test_source_sync_plan_flag_is_plan_only_without_report_write(tmp_path):
     assert not report_dir.exists() or list(report_dir.glob("*.yaml")) == []
 
 
-def test_source_sync_prune_is_rejected_clearly(tmp_path, capsys):
+def test_source_sync_prune_requires_apply(tmp_path, capsys):
     root = tmp_path / "demo"
     assert main(["project", "init", "--project-root", str(root)]) == 0
     source_path = tmp_path / "openapi.json"
@@ -188,7 +223,42 @@ def test_source_sync_prune_is_rejected_clearly(tmp_path, capsys):
     stderr = capsys.readouterr().err
 
     assert exit_code != 0
-    assert "--prune is not implemented" in stderr
+    assert "--prune requires --apply" in stderr
+
+
+def test_source_sync_apply_prune_removes_unreferenced_upstream_removed_api(tmp_path):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}), encoding="utf-8")
+    _write_source(root, source_url=str(source_path), max_remove_count=20, max_remove_ratio=1.0)
+    stale_path = _write_synced_api(root)
+
+    exit_code = main(
+        ["source", "sync", "demo-openapi", "--project-root", str(root), "--apply", "--prune"]
+    )
+
+    project = load_project(root)
+    assert exit_code == 0
+    assert not stale_path.exists()
+    assert "auth.get.stale" not in project.apis
+
+
+def test_source_sync_apply_prune_fails_when_prune_guards_block(tmp_path, capsys):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    source_path = tmp_path / "openapi.json"
+    source_path.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}), encoding="utf-8")
+    _write_source(root, source_url=str(source_path), max_remove_count=0, max_remove_ratio=0.0)
+    _write_synced_api(root)
+
+    exit_code = main(
+        ["source", "sync", "demo-openapi", "--project-root", str(root), "--apply", "--prune"]
+    )
+    stderr = capsys.readouterr().err
+
+    assert exit_code != 0
+    assert "prune guard exceeded" in stderr
 
 
 def test_project_import_openapi_loads_document_once(tmp_path, monkeypatch):

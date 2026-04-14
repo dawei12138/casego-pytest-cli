@@ -240,6 +240,30 @@ def test_apply_source_sync_writes_unique_report_file_per_run(tmp_path):
     assert len({item.name for item in report_files}) == 2
 
 
+def test_apply_source_sync_prune_removes_unreferenced_upstream_removed_api(tmp_path):
+    apifox = tmp_path / "apifox"
+    _create_base_project(apifox)
+    _write_text(
+        apifox / "sources" / "demo-openapi.yaml",
+        "kind: source\nid: demo-openapi\nname: demo\nspec:\n  type: openapi\n  url: https://demo.example/openapi.json\n  syncMode: full\n  includePaths: []\n  excludePaths: []\n  tagMap:\n    AuthTag: auth\n  guards:\n    maxRemoveCount: 20\n    maxRemoveRatio: 1.0\n",
+    )
+    stale_path = apifox / "apis" / "auth" / "stale.yaml"
+    _write_text(
+        stale_path,
+        "kind: api\nid: auth.get.stale\nname: stale\nmeta:\n  module: auth\n  sync:\n    sourceId: demo-openapi\n    syncKey: stale_get\n    lifecycle: active\nspec:\n  protocol: http\n  contract:\n    request:\n      method: GET\n      path: /stale\n      contentType: application/json\n    responses:\n      '200': {}\n",
+    )
+
+    project = load_project(tmp_path)
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], {"openapi": "3.0.3", "paths": {}})
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+    report = apply_source_sync(project, "demo-openapi", plan, prune=True)
+
+    assert report.summary["upstreamRemovedApis"] == 1
+    assert report.summary["prunedApis"] == 1
+    assert report.details["prunedApis"] == ["auth.get.stale"]
+    assert not stale_path.exists()
+
+
 def test_apply_source_sync_fails_when_same_api_id_owned_by_different_source(tmp_path):
     apifox = tmp_path / "apifox"
     _create_base_project(apifox)
