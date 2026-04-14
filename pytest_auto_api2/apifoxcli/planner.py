@@ -21,8 +21,14 @@ def _build_flow_nodes(
 ) -> List[PlanNode]:
     flow = project.flows[flow_id]
     nodes: List[PlanNode] = []
-    for step in flow.spec.steps:
+    for step_index, step in enumerate(flow.spec.steps):
+        ref_count = int(bool(step.caseRef)) + int(bool(step.apiRef))
+        if ref_count != 1:
+            raise ValueError(f"flow {flow_id} step {step_index} must define exactly one of caseRef or apiRef")
+
         if step.caseRef:
+            if step.caseRef not in project.cases:
+                raise ValueError(f"flow {flow_id} step {step_index} caseRef not found: {step.caseRef}")
             nodes.append(
                 PlanNode(
                     kind="case",
@@ -33,6 +39,8 @@ def _build_flow_nodes(
                 )
             )
         elif step.apiRef:
+            if step.apiRef not in project.apis:
+                raise ValueError(f"flow {flow_id} step {step_index} apiRef not found: {step.apiRef}")
             nodes.append(
                 PlanNode(
                     kind="api",
@@ -111,7 +119,15 @@ def build_suite_plan(project: LoadedProject, suite_id: str, env_override: Option
     nodes: List[PlanNode] = []
 
     for item_index, item in enumerate(suite.spec.items):
+        ref_count = int(bool(item.caseRef)) + int(bool(item.apiRef)) + int(bool(item.flowRef))
+        if ref_count != 1:
+            raise ValueError(
+                f"suite {suite_id} item {item_index} must define exactly one of caseRef, apiRef, or flowRef"
+            )
+
         if item.caseRef:
+            if item.caseRef not in project.cases:
+                raise ValueError(f"suite {suite_id} item {item_index} caseRef not found: {item.caseRef}")
             for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
                 nodes.append(
                     PlanNode(
@@ -123,6 +139,8 @@ def build_suite_plan(project: LoadedProject, suite_id: str, env_override: Option
                     )
                 )
         elif item.apiRef:
+            if item.apiRef not in project.apis:
+                raise ValueError(f"suite {suite_id} item {item_index} apiRef not found: {item.apiRef}")
             for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
                 nodes.append(
                     PlanNode(
@@ -134,6 +152,8 @@ def build_suite_plan(project: LoadedProject, suite_id: str, env_override: Option
                     )
                 )
         elif item.flowRef:
+            if item.flowRef not in project.flows:
+                raise ValueError(f"suite {suite_id} item {item_index} flowRef not found: {item.flowRef}")
             for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
                 context_key = f"suite:{suite_id}:item:{item_index}:row:{row_index}:flow"
                 nodes.extend(_build_flow_nodes(project, item.flowRef, env_id, row, context_key))

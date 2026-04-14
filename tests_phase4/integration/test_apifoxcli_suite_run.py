@@ -21,7 +21,13 @@ class DemoHandler(BaseHTTPRequestHandler):
         return
 
 
-def test_suite_run_executes_canonical_yaml(tmp_path):
+def _read_summary(capsys):
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines, "expected JSON summary output"
+    return json.loads(lines[-1])
+
+
+def test_suite_run_executes_canonical_yaml(tmp_path, capsys):
     server = HTTPServer(("127.0.0.1", 0), DemoHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -59,6 +65,9 @@ def test_suite_run_executes_canonical_yaml(tmp_path):
 
         exit_code = main(["suite", "run", "smoke", "--project-root", str(root), "--json"])
         assert exit_code == 0
+        summary = _read_summary(capsys)
+        assert summary["total"] == 1
+        assert [item["resource_id"] for item in summary["details"]] == ["user.login.smoke"]
     finally:
         server.shutdown()
         thread.join()

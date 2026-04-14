@@ -47,6 +47,12 @@ class AuthChainHandler(BaseHTTPRequestHandler):
         return
 
 
+def _read_summary(capsys):
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines, "expected JSON summary output"
+    return json.loads(lines[-1])
+
+
 def _write_auth_chain_project(root, port):
     apifox = root / "apifox"
     for rel in ("envs", "apis", "cases", "flows", "suites", "datasets"):
@@ -90,7 +96,7 @@ def _write_auth_chain_project(root, port):
     )
 
 
-def test_flow_run_executes_with_dataset_and_env_headers(tmp_path):
+def test_flow_run_executes_with_dataset_and_env_headers(tmp_path, capsys):
     server = HTTPServer(("127.0.0.1", 0), AuthChainHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -110,12 +116,18 @@ def test_flow_run_executes_with_dataset_and_env_headers(tmp_path):
             ]
         )
         assert exit_code == 0
+        summary = _read_summary(capsys)
+        assert summary["total"] == 2
+        assert [item["resource_id"] for item in summary["details"]] == [
+            "auth.login.success",
+            "auth.get-info.smoke",
+        ]
     finally:
         server.shutdown()
         thread.join()
 
 
-def test_suite_run_executes_flow_with_extracted_token_and_env_headers(tmp_path):
+def test_suite_run_executes_flow_with_extracted_token_and_env_headers(tmp_path, capsys):
     server = HTTPServer(("127.0.0.1", 0), AuthChainHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -124,6 +136,12 @@ def test_suite_run_executes_flow_with_extracted_token_and_env_headers(tmp_path):
         _write_auth_chain_project(tmp_path, server.server_port)
         exit_code = main(["suite", "run", "smoke", "--project-root", str(tmp_path), "--json"])
         assert exit_code == 0
+        summary = _read_summary(capsys)
+        assert summary["total"] == 2
+        assert [item["resource_id"] for item in summary["details"]] == [
+            "auth.login.success",
+            "auth.get-info.smoke",
+        ]
     finally:
         server.shutdown()
         thread.join()
