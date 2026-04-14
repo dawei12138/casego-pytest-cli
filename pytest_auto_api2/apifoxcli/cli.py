@@ -31,9 +31,10 @@ def _cmd_project_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_project_import_openapi(args: argparse.Namespace) -> int:
-    document = load_openapi_document(args.source)
+    project_root = Path(args.project_root)
+    document = load_openapi_document(args.source, root=project_root)
     bootstrap_openapi_source(
-        root=Path(args.project_root),
+        root=project_root,
         source_id=args.source_id,
         source=args.source,
         env_id=args.env_id,
@@ -43,7 +44,7 @@ def _cmd_project_import_openapi(args: argparse.Namespace) -> int:
         document=document,
     )
     return _run_source_sync(
-        project_root=Path(args.project_root),
+        project_root=project_root,
         source_id=args.source_id,
         apply=True,
         prune=False,

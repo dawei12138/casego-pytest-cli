@@ -103,3 +103,50 @@ def test_project_import_openapi_with_relative_source_can_sync_from_different_cwd
     monkeypatch.chdir(tmp_path)
     second_exit = main(["source", "sync", "demo-openapi", "--project-root", str(root), "--plan"])
     assert second_exit == 0
+
+
+def test_project_import_openapi_relative_source_resolves_against_project_root_from_external_cwd(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "demo"
+    assert main(["project", "init", "--project-root", str(root)]) == 0
+    spec = {
+        "openapi": "3.0.3",
+        "servers": [{"url": "https://demo.example/dev-api", "description": "qa"}],
+        "paths": {
+            "/login": {
+                "post": {
+                    "operationId": "login_post",
+                    "summary": "Login",
+                    "tags": ["登录模块"],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    source_rel = root / "specs" / "openapi.json"
+    source_rel.parent.mkdir(parents=True, exist_ok=True)
+    source_rel.write_text(json.dumps(spec), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    exit_code = main(
+        [
+            "project",
+            "import-openapi",
+            "--project-root",
+            str(root),
+            "--source",
+            "specs/openapi.json",
+            "--source-id",
+            "demo-openapi",
+            "--server-description",
+            "qa",
+        ]
+    )
+
+    project = load_project(root)
+    source_yaml = (root / "apifox" / "sources" / "demo-openapi.yaml").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert "demo-openapi" in project.sources
+    assert "auth.post.login" in project.apis
+    assert "url: specs/openapi.json" in source_yaml

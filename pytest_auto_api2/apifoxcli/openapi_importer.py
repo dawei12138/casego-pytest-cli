@@ -46,7 +46,7 @@ def resolve_openapi_source_location(source: str, *, root: Optional[Path] = None)
 def normalize_openapi_source_reference(root: Path, source: str) -> str:
     if source.startswith(("http://", "https://")):
         return source
-    resolved = Path(resolve_openapi_source_location(source))
+    resolved = Path(resolve_openapi_source_location(source, root=Path(root)))
     project_root = Path(root).resolve()
     try:
         return resolved.relative_to(project_root).as_posix()
@@ -164,7 +164,7 @@ def import_openapi_project(
 ) -> int:
     project_root = Path(root)
     apifox = project_root / "apifox"
-    document = load_openapi_document(source)
+    document = load_openapi_document(source, root=project_root)
     selected_server = select_openapi_server(document, server_description, server_url)
     base_url = resolve_openapi_base_url(selected_server.get("url", ""), source)
 
@@ -204,7 +204,7 @@ def bootstrap_openapi_source(
     project_root = Path(root)
     apifox = project_root / "apifox"
     normalized_source = normalize_openapi_source_reference(project_root, source)
-    loaded_document = document if document is not None else load_openapi_document(source)
+    loaded_document = document if document is not None else load_openapi_document(source, root=project_root)
     selected_server = select_openapi_server(loaded_document, server_description, server_url)
     resolved_server_url = str(selected_server.get("url") or "")
     resolved_server_description = str(selected_server.get("description") or "") or None
