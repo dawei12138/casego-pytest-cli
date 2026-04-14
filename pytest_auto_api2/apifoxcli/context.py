@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 class RunContext:
     env: Dict[str, Any]
     dataset: Dict[str, Any]
+    # Shared store for extracted/auth values across nodes in the same context.
     values: Dict[str, Any] = field(default_factory=dict)
 
 

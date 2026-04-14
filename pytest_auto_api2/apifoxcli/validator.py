@@ -1,26 +1,17 @@
 from __future__ import annotations
 
-import re
-from typing import Any, Iterable
 from typing import List
 
 from .models import LoadedProject
+from .resolver import iter_expression_tokens
 
 SUPPORTED_PREFIXES = ("env.", "context.", "dataset.", "fn.")
-TOKEN_RE = re.compile(r"\$\{([^}]+)\}")
 
 
-def _iter_string_values(value: Any) -> Iterable[str]:
-    if isinstance(value, str):
-        yield value
-        return
-    if isinstance(value, dict):
-        for item in value.values():
-            yield from _iter_string_values(item)
-        return
-    if isinstance(value, list):
-        for item in value:
-            yield from _iter_string_values(item)
+def _validate_supported_expressions(owner: str, value, errors: List[str]) -> None:
+    for token in iter_expression_tokens(value):
+        if not token.startswith(SUPPORTED_PREFIXES):
+            errors.append(f"{owner} unsupported expression: {token}")
 
 
 def validate_project(project: LoadedProject) -> List[str]:
@@ -30,10 +21,7 @@ def validate_project(project: LoadedProject) -> List[str]:
         errors.append(f"project.defaultEnv not found: {project.project.spec.defaultEnv}")
 
     for env in project.envs.values():
-        for raw in _iter_string_values(env.spec.headers):
-            for token in TOKEN_RE.findall(raw):
-                if not token.startswith(SUPPORTED_PREFIXES):
-                    errors.append(f"env {env.id} unsupported expression: {token}")
+        _validate_supported_expressions(f"env {env.id}", env.spec.headers, errors)
 
     for api in project.apis.values():
         env_ref = api.spec.envRef or project.project.spec.defaultEnv
@@ -41,16 +29,13 @@ def validate_project(project: LoadedProject) -> List[str]:
             errors.append(f"api {api.id} envRef not found: {env_ref}")
 
         if api.spec.request:
-            for field_name, field_value in (
+            for _, field_value in (
                 ("headers", api.spec.request.headers),
                 ("query", api.spec.request.query),
                 ("json", api.spec.request.json_body),
                 ("form", api.spec.request.form),
             ):
-                for raw in _iter_string_values(field_value):
-                    for token in TOKEN_RE.findall(raw):
-                        if not token.startswith(SUPPORTED_PREFIXES):
-                            errors.append(f"api {api.id} unsupported expression: {token}")
+                _validate_supported_expressions(f"api {api.id}", field_value, errors)
 
     for case in project.cases.values():
         if case.spec.apiRef not in project.apis:
@@ -59,6 +44,7 @@ def validate_project(project: LoadedProject) -> List[str]:
         env_ref = case.spec.envRef or project.project.spec.defaultEnv
         if env_ref not in project.envs:
             errors.append(f"case {case.id} envRef not found: {env_ref}")
+        _validate_supported_expressions(f"case {case.id}", case.spec.request, errors)
 
     for flow in project.flows.values():
         for step in flow.spec.steps:

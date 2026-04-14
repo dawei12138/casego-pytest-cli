@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable
 
 from .context import RunContext
 
@@ -46,3 +46,16 @@ def resolve_value(value: Any, context: RunContext, missing: str = "empty") -> An
     if missing == "none" and had_token and had_missing_token:
         return None
     return resolved_value
+
+
+def iter_expression_tokens(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield from TOKEN_RE.findall(value)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from iter_expression_tokens(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_expression_tokens(item)
