@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -11,6 +11,124 @@ import yaml
 
 HTTP_METHODS = ("get", "post", "put", "delete", "patch", "options", "head")
 _OMIT = object()
+
+
+def load_openapi_document(source: str) -> Dict[str, Any]:
+    return _load_document(source)
+
+
+def select_openapi_server(
+    document: Dict[str, Any],
+    server_description: Optional[str],
+    server_url: Optional[str],
+) -> Dict[str, Any]:
+    return _select_server(document, server_description, server_url)
+
+
+def resolve_openapi_base_url(server_url: str, source: str) -> str:
+    return _resolve_base_url(server_url, source)
+
+
+def has_openapi_bearer_security(document: Dict[str, Any]) -> bool:
+    return _has_bearer_security(document)
+
+
+def iter_openapi_operations(
+    document: Dict[str, Any],
+    include_paths: Optional[Iterable[str]] = None,
+    exclude_paths: Optional[Iterable[str]] = None,
+) -> Iterable[Tuple[str, str, Dict[str, Any]]]:
+    allowed_paths = set(include_paths or [])
+    blocked_paths = set(exclude_paths or [])
+    for path, path_item in (document.get("paths") or {}).items():
+        if allowed_paths and path not in allowed_paths:
+            continue
+        if path in blocked_paths:
+            continue
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            method_name = str(method).lower()
+            if method_name not in HTTP_METHODS:
+                continue
+            yield path, method_name, operation or {}
+
+
+def build_openapi_sync_key(method: str, path: str, operation: Dict[str, Any]) -> str:
+    operation_id = (operation.get("operationId") or "").strip()
+    if operation_id:
+        return operation_id
+
+    parts = path_segments(path)
+    stem = "_".join(part.replace("-", "_") for part in parts) if parts else "root"
+    return f"{stem}_{method.lower()}"
+
+
+def normalize_openapi_operation_contract(
+    document: Dict[str, Any],
+    path: str,
+    method: str,
+    operation: Dict[str, Any],
+) -> Dict[str, object]:
+    request: Dict[str, object] = {"method": method.upper(), "path": path}
+    content = ((operation.get("requestBody") or {}).get("content") or {})
+
+    if "application/x-www-form-urlencoded" in content:
+        request["contentType"] = "application/x-www-form-urlencoded"
+        schema = _resolve_schema(document, content["application/x-www-form-urlencoded"].get("schema") or {})
+        form_schema = normalize_openapi_schema_properties(document, schema)
+        if form_schema:
+            request["formSchema"] = form_schema
+    elif "multipart/form-data" in content:
+        request["contentType"] = "multipart/form-data"
+        schema = _resolve_schema(document, content["multipart/form-data"].get("schema") or {})
+        form_schema = normalize_openapi_schema_properties(document, schema)
+        if form_schema:
+            request["formSchema"] = form_schema
+    elif "application/json" in content:
+        request["contentType"] = "application/json"
+        schema = _resolve_schema(document, content["application/json"].get("schema") or {})
+        json_schema = normalize_openapi_schema_properties(document, schema)
+        if json_schema:
+            request["jsonSchema"] = json_schema
+
+    responses = {str(status_code): {} for status_code in ((operation.get("responses") or {}).keys())}
+    return {"request": request, "responses": responses}
+
+
+def normalize_openapi_schema_properties(document: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, object]:
+    resolved = _resolve_schema(document, schema)
+    properties = resolved.get("properties") or {}
+    if not isinstance(properties, dict):
+        return {}
+
+    required = set(resolved.get("required") or [])
+    normalized: Dict[str, object] = {}
+    for field_name, field_schema in properties.items():
+        resolved_field = _resolve_schema(document, field_schema or {})
+        field_type = resolved_field.get("type")
+        if not field_type and "properties" in resolved_field:
+            field_type = "object"
+        normalized_field: Dict[str, object] = {"type": field_type or "string"}
+        if field_name in required:
+            normalized_field["required"] = True
+        normalized[field_name] = normalized_field
+    return normalized
+
+
+def slug_segment(value: str) -> str:
+    return _slug_segment(value)
+
+
+def path_segments(path: str) -> List[str]:
+    parts: List[str] = []
+    for raw_part in path.strip("/").split("/"):
+        if not raw_part:
+            continue
+        if raw_part.startswith("{") and raw_part.endswith("}"):
+            raw_part = f"by-{raw_part[1:-1]}"
+        parts.append(_slug_segment(raw_part))
+    return parts
 
 
 def import_openapi_project(
@@ -23,36 +141,29 @@ def import_openapi_project(
 ) -> int:
     project_root = Path(root)
     apifox = project_root / "apifox"
-    document = _load_document(source)
-    selected_server = _select_server(document, server_description, server_url)
-    base_url = _resolve_base_url(selected_server.get("url", ""), source)
+    document = load_openapi_document(source)
+    selected_server = select_openapi_server(document, server_description, server_url)
+    base_url = resolve_openapi_base_url(selected_server.get("url", ""), source)
 
-    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, _has_bearer_security(document))
+    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(document))
 
-    allowed_paths = set(include_paths or [])
     imported = 0
-    for path, path_item in (document.get("paths") or {}).items():
-        if allowed_paths and path not in allowed_paths:
-            continue
-
-        for method, operation in path_item.items():
-            if method.lower() not in HTTP_METHODS:
-                continue
-            resource = _build_api_resource(
-                document=document,
-                source=source,
-                env_id=env_id,
-                path=path,
-                method=method.lower(),
-                operation=operation or {},
-            )
-            file_path = _resource_file_path(apifox / "apis", resource["id"])
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(
-                yaml.safe_dump(resource, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
-            imported += 1
+    for path, method, operation in iter_openapi_operations(document, include_paths=include_paths):
+        resource = _build_api_resource(
+            document=document,
+            source=source,
+            env_id=env_id,
+            path=path,
+            method=method,
+            operation=operation,
+        )
+        file_path = _resource_file_path(apifox / "apis", resource["id"])
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(
+            yaml.safe_dump(resource, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        imported += 1
 
     return imported
 
@@ -336,12 +447,7 @@ def _schema_default(schema: Dict[str, Any]) -> Any:
 
 def _build_api_id(method: str, path: str) -> str:
     parts = [_slug_segment(method)]
-    for raw_part in path.strip("/").split("/"):
-        if not raw_part:
-            continue
-        if raw_part.startswith("{") and raw_part.endswith("}"):
-            raw_part = f"by-{raw_part[1:-1]}"
-        parts.append(_slug_segment(raw_part))
+    parts.extend(path_segments(path))
     if len(parts) == 1:
         parts.append("root")
     return ".".join(parts)
