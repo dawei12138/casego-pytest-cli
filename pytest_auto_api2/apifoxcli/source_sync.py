@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
 
@@ -112,6 +112,40 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
     report = build_sync_report(project, source_id, plan)
     write_sync_report(root / "reports" / "sync", report)
     return report
+
+
+def read_latest_sync_report(root: Path, source_id: str) -> Dict[str, Any]:
+    report_root = Path(root) / "apifox" / "reports" / "sync"
+    matches = sorted(report_root.glob(f"{source_id}-*.yaml"))
+    if not matches:
+        raise FileNotFoundError(f"no sync report found for source '{source_id}'")
+
+    payload = yaml.safe_load(matches[-1].read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise TypeError(f"sync report payload must be a mapping: {matches[-1]}")
+    return payload
+
+
+def upsert_source_rebind(root: Path, source_id: str, api_id: str, sync_key: str) -> Path:
+    source_path = Path(root) / "apifox" / "sources" / f"{source_id}.yaml"
+    if not source_path.exists():
+        raise FileNotFoundError(f"source not found: {source_id}")
+
+    payload = yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise TypeError(f"source payload must be a mapping: {source_path}")
+    spec = payload.setdefault("spec", {})
+    if not isinstance(spec, dict):
+        spec = {}
+        payload["spec"] = spec
+    rebinds = spec.get("rebinds")
+    if not isinstance(rebinds, dict):
+        rebinds = {}
+    rebinds[str(sync_key)] = str(api_id)
+    spec["rebinds"] = rebinds
+
+    source_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return source_path
 
 
 def enforce_api_id_source_ownership(
@@ -275,6 +309,16 @@ def render_api_resource(project: LoadedProject, source_id: str, item: SyncCandid
         spec = {}
     spec["protocol"] = spec.get("protocol") or "http"
     spec["contract"] = deepcopy(item.contract)
+    if not spec.get("envRef"):
+        spec["envRef"] = project.project.spec.defaultEnv
+    if not spec.get("request"):
+        request_payload = _request_spec_from_contract(item.contract)
+        if request_payload:
+            spec["request"] = request_payload
+    if not spec.get("expect"):
+        spec["expect"] = {"status": 200, "assertions": []}
+    if not isinstance(spec.get("extract"), list):
+        spec["extract"] = []
     payload["spec"] = spec
     payload["kind"] = "api"
     payload["id"] = item.api_id
@@ -600,3 +644,42 @@ def _parse_method_path(raw: str) -> Optional[Tuple[str, str]]:
         if normalized_method in HTTP_METHODS and normalized_path.startswith("/"):
             return normalized_method.upper(), normalized_path
     return None
+
+
+def _request_spec_from_contract(contract: Dict[str, object]) -> Optional[Dict[str, object]]:
+    request = (contract or {}).get("request")
+    if not isinstance(request, dict):
+        return None
+    method = str(request.get("method") or "").upper()
+    path = str(request.get("path") or "")
+    if not method or not path:
+        return None
+
+    payload: Dict[str, object] = {"method": method, "path": path}
+    content_type = request.get("contentType")
+    if isinstance(content_type, str) and content_type:
+        payload["headers"] = {"Content-Type": content_type}
+
+    form_payload = _payload_from_contract_schema(request.get("formSchema"))
+    if form_payload:
+        payload["form"] = form_payload
+
+    json_payload = _payload_from_contract_schema(request.get("jsonSchema"))
+    if json_payload:
+        payload["json"] = json_payload
+    return payload
+
+
+def _payload_from_contract_schema(schema: object) -> Dict[str, object]:
+    if not isinstance(schema, dict):
+        return {}
+    payload: Dict[str, object] = {}
+    for field_name, field_schema in schema.items():
+        if not isinstance(field_schema, dict):
+            continue
+        if "default" in field_schema:
+            payload[field_name] = field_schema["default"]
+            continue
+        if field_schema.get("required"):
+            payload[field_name] = f"${{dataset.{field_name}}}"
+    return payload

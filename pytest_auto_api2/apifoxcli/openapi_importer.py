@@ -112,6 +112,8 @@ def normalize_openapi_schema_properties(document: Dict[str, Any], schema: Dict[s
         normalized_field: Dict[str, object] = {"type": field_type or "string"}
         if field_name in required:
             normalized_field["required"] = True
+        if "default" in resolved_field:
+            normalized_field["default"] = resolved_field["default"]
         normalized[field_name] = normalized_field
     return normalized
 
@@ -168,6 +170,35 @@ def import_openapi_project(
     return imported
 
 
+def bootstrap_openapi_source(
+    root: Path,
+    source_id: str,
+    source: str,
+    env_id: str = "qa",
+    server_description: Optional[str] = None,
+    server_url: Optional[str] = None,
+    include_paths: Optional[Iterable[str]] = None,
+) -> None:
+    project_root = Path(root)
+    apifox = project_root / "apifox"
+    document = load_openapi_document(source)
+    selected_server = select_openapi_server(document, server_description, server_url)
+    resolved_server_url = str(selected_server.get("url") or "")
+    resolved_server_description = str(selected_server.get("description") or "") or None
+    base_url = resolve_openapi_base_url(resolved_server_url, source)
+
+    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(document))
+    _write_source(
+        apifox / "sources" / f"{source_id}.yaml",
+        source_id=source_id,
+        source=source,
+        server_description=resolved_server_description,
+        server_url=resolved_server_url or None,
+        include_paths=list(include_paths or []),
+        tag_map=_infer_tag_map(document, include_paths=include_paths),
+    )
+
+
 def _load_document(source: str) -> Dict[str, Any]:
     if source.startswith(("http://", "https://")):
         response = requests.get(source, timeout=30)
@@ -218,6 +249,60 @@ def _resolve_base_url(server_url: str, source: str) -> str:
     return server_url.rstrip("/")
 
 
+def _write_source(
+    path: Path,
+    *,
+    source_id: str,
+    source: str,
+    server_description: Optional[str],
+    server_url: Optional[str],
+    include_paths: List[str],
+    tag_map: Dict[str, str],
+) -> None:
+    if path.exists():
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    else:
+        payload = {"kind": "source", "id": source_id, "name": source_id, "spec": {}}
+    if not isinstance(payload, dict):
+        payload = {"kind": "source", "id": source_id, "name": source_id, "spec": {}}
+
+    payload["kind"] = "source"
+    payload["id"] = source_id
+    payload["name"] = str(payload.get("name") or source_id)
+
+    spec = payload.setdefault("spec", {})
+    if not isinstance(spec, dict):
+        spec = {}
+        payload["spec"] = spec
+
+    existing_tag_map = spec.get("tagMap")
+    if not isinstance(existing_tag_map, dict):
+        existing_tag_map = {}
+    merged_tag_map = dict(existing_tag_map)
+    merged_tag_map.update({key: value for key, value in tag_map.items() if value and value != "_default"})
+
+    spec["type"] = "openapi"
+    spec["url"] = source
+    spec["syncMode"] = str(spec.get("syncMode") or "full")
+    spec["missingPolicy"] = str(spec.get("missingPolicy") or "markRemoved")
+    spec["serverDescription"] = server_description
+    spec["serverUrl"] = server_url
+    spec["includePaths"] = include_paths
+    spec["excludePaths"] = list(spec.get("excludePaths") or [])
+    spec["tagMap"] = merged_tag_map
+    rebinds = spec.get("rebinds")
+    spec["rebinds"] = rebinds if isinstance(rebinds, dict) else {}
+    guards = spec.get("guards")
+    if not isinstance(guards, dict):
+        guards = {}
+    guards.setdefault("maxRemoveCount", 20)
+    guards.setdefault("maxRemoveRatio", 0.2)
+    spec["guards"] = guards
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
 def _write_env(path: Path, env_id: str, base_url: str, add_bearer_header: bool) -> None:
     if path.exists():
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -243,6 +328,41 @@ def _has_bearer_security(document: Dict[str, Any]) -> bool:
         if scheme.get("type") == "oauth2":
             return True
     return False
+
+
+def _infer_tag_map(
+    document: Dict[str, Any],
+    include_paths: Optional[Iterable[str]] = None,
+) -> Dict[str, str]:
+    tag_map: Dict[str, str] = {}
+    for path, method, operation in iter_openapi_operations(document, include_paths=include_paths):
+        tags = operation.get("tags") or []
+        for tag in tags:
+            if not isinstance(tag, str) or not tag or tag in tag_map:
+                continue
+            tag_map[tag] = _infer_module_name(tag, path, method, operation)
+    return tag_map
+
+
+def _infer_module_name(tag: str, path: str, method: str, operation: Dict[str, Any]) -> str:
+    tag_slug = _slug_segment(tag)
+    if tag_slug != "item":
+        return tag_slug
+    folded = tag.casefold()
+    if any(keyword in folded for keyword in ("auth", "login", "signin", "oauth", "token", "登录", "认证", "授权")):
+        return "auth"
+    operation_id = str(operation.get("operationId") or "").casefold()
+    if any(keyword in operation_id for keyword in ("auth", "login", "signin", "token")):
+        return "auth"
+    segments = path_segments(path)
+    if not segments:
+        return "_default"
+    first = segments[0]
+    if first in {"v1", "v2", "v3", "api"} and len(segments) > 1:
+        first = segments[1]
+    if first in {"login", "signin", "sign-in", "logout", "token", "session", "oauth", "auth"}:
+        return "auth"
+    return first or slug_segment(method)
 
 
 def _resource_file_path(root: Path, resource_id: str) -> Path:
