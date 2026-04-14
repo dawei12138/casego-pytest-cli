@@ -62,6 +62,7 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
     root = project.root / "apifox"
     apis_root = root / "apis"
     api_paths_by_id, api_ids_by_path = index_api_files_by_id(apis_root)
+    enforce_api_id_source_ownership(project, source_id, plan, index_api_source_owners(apis_root))
     for item in [*plan.created, *plan.updated]:
         payload = render_api_resource(project, source_id, item)
         path = resolve_api_resource_path(apis_root, item.module, item.api_id, api_ids_by_path)
@@ -111,6 +112,31 @@ def apply_source_sync(project: LoadedProject, source_id: str, plan: SyncPlan) ->
     report = build_sync_report(project, source_id, plan)
     write_sync_report(root / "reports" / "sync", report)
     return report
+
+
+def enforce_api_id_source_ownership(
+    project: LoadedProject,
+    source_id: str,
+    plan: SyncPlan,
+    disk_owners_by_id: Dict[str, Set[str]],
+) -> None:
+    target_api_ids = {
+        item.api_id
+        for item in [*plan.created, *plan.updated, *plan.upstream_removed]
+    }
+    for api_id in sorted(target_api_ids):
+        owners = set(disk_owners_by_id.get(api_id, set()))
+        loaded = project.apis.get(api_id)
+        loaded_owner = _api_source_id_from_resource(loaded)
+        if loaded_owner:
+            owners.add(loaded_owner)
+        foreign = sorted(owner for owner in owners if owner and owner != source_id)
+        if foreign:
+            owner_list = ", ".join(foreign)
+            raise ValueError(
+                f"source ownership conflict for api_id '{api_id}': "
+                f"owned by source(s) [{owner_list}], cannot sync source '{source_id}'"
+            )
 
 
 def normalize_openapi_document(source: SourceResource, document: Dict[str, object]) -> List[NormalizedOperation]:
@@ -294,12 +320,24 @@ def index_api_files_by_id(apis_root: Path) -> Tuple[Dict[str, Set[Path]], Dict[P
     if not apis_root.exists():
         return api_paths_by_id, api_ids_by_path
     for file_path in sorted(apis_root.rglob("*.yaml")):
-        api_id = _read_api_id_from_yaml(file_path)
+        api_id, _ = _read_api_identity_from_yaml(file_path)
         if not api_id:
             continue
         api_ids_by_path[file_path] = api_id
         api_paths_by_id.setdefault(api_id, set()).add(file_path)
     return api_paths_by_id, api_ids_by_path
+
+
+def index_api_source_owners(apis_root: Path) -> Dict[str, Set[str]]:
+    owners_by_id: Dict[str, Set[str]] = {}
+    if not apis_root.exists():
+        return owners_by_id
+    for file_path in sorted(apis_root.rglob("*.yaml")):
+        api_id, source_id = _read_api_identity_from_yaml(file_path)
+        if not api_id or not source_id:
+            continue
+        owners_by_id.setdefault(api_id, set()).add(source_id)
+    return owners_by_id
 
 
 def remove_old_api_files_for_id(
@@ -327,7 +365,7 @@ def _path_available_for_api(path: Path, api_id: str, api_ids_by_path: Dict[Path,
         return existing_id == api_id
     if not path.exists():
         return True
-    file_api_id = _read_api_id_from_yaml(path)
+    file_api_id, _ = _read_api_identity_from_yaml(path)
     if not file_api_id:
         return False
     api_ids_by_path[path] = file_api_id
@@ -335,14 +373,46 @@ def _path_available_for_api(path: Path, api_id: str, api_ids_by_path: Dict[Path,
 
 
 def _read_api_id_from_yaml(path: Path) -> Optional[str]:
+    api_id, _ = _read_api_identity_from_yaml(path)
+    return api_id
+
+
+def _read_api_identity_from_yaml(path: Path) -> Tuple[Optional[str], Optional[str]]:
     try:
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
-        return None
+        return None, None
     if not isinstance(payload, dict):
-        return None
+        return None, None
     value = payload.get("id")
-    return str(value) if isinstance(value, str) and value else None
+    api_id = str(value) if isinstance(value, str) and value else None
+    sync_source_id = _api_source_id_from_payload(payload)
+    return api_id, sync_source_id
+
+
+def _api_source_id_from_payload(payload: Dict[str, object]) -> Optional[str]:
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    sync_meta = meta.get("sync")
+    if not isinstance(sync_meta, dict):
+        return None
+    source_id = sync_meta.get("sourceId")
+    if isinstance(source_id, str) and source_id:
+        return source_id
+    return None
+
+
+def _api_source_id_from_resource(resource: Optional[ApiResource]) -> Optional[str]:
+    if resource is None:
+        return None
+    sync_meta = (resource.meta or {}).get("sync")
+    if not isinstance(sync_meta, dict):
+        return None
+    source_id = sync_meta.get("sourceId")
+    if isinstance(source_id, str) and source_id:
+        return source_id
+    return None
 
 
 def _prune_empty_parents(path: Path, *, stop_dir: Path) -> None:

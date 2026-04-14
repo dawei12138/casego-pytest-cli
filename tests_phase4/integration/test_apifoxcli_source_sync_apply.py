@@ -238,3 +238,45 @@ def test_apply_source_sync_writes_unique_report_file_per_run(tmp_path):
     report_files = sorted((apifox / "reports" / "sync").glob("*.yaml"))
     assert len(report_files) == 2
     assert len({item.name for item in report_files}) == 2
+
+
+def test_apply_source_sync_fails_when_same_api_id_owned_by_different_source(tmp_path):
+    apifox = tmp_path / "apifox"
+    _create_base_project(apifox)
+    _write_text(
+        apifox / "sources" / "other-openapi.yaml",
+        "kind: source\nid: other-openapi\nname: other\nspec:\n  type: openapi\n  url: https://other.example/openapi.json\n  syncMode: full\n  includePaths: []\n  excludePaths: []\n  tagMap:\n    AuthTag: auth\n  guards:\n    maxRemoveCount: 20\n    maxRemoveRatio: 0.2\n",
+    )
+    _write_text(
+        apifox / "apis" / "auth" / "get-user.yaml",
+        "kind: api\nid: auth.get.user\nname: get user\nmeta:\n  module: auth\n  sync:\n    sourceId: other-openapi\n    syncKey: get_user\n    lifecycle: active\nspec:\n  protocol: http\n  contract:\n    request:\n      method: GET\n      path: /user\n      contentType: application/json\n    responses:\n      '200': {}\n",
+    )
+
+    project = load_project(tmp_path)
+    document = {
+        "openapi": "3.0.3",
+        "paths": {
+            "/user": {
+                "get": {
+                    "operationId": "get_user",
+                    "summary": "Get User",
+                    "tags": ["AuthTag"],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], document)
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+
+    try:
+        apply_source_sync(project, "demo-openapi", plan)
+    except ValueError as exc:
+        message = str(exc)
+        assert "source ownership conflict" in message
+        assert "auth.get.user" in message
+        assert "other-openapi" in message
+        assert "demo-openapi" in message
+    else:
+        raise AssertionError("expected ValueError for cross-source API ID ownership conflict")
