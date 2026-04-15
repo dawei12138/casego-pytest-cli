@@ -63,7 +63,7 @@ def _write_auth_chain_project(root, port):
         encoding="utf-8",
     )
     (apifox / "envs" / "qa.yaml").write_text(
-        f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{port}\n  headers:\n    Authorization: Bearer ${{context.token}}\n  variables: {{}}\n",
+        f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{port}\n  headers:\n    Authorization: Bearer ${{{{token}}}}\n  variables: {{}}\n",
         encoding="utf-8",
     )
     (apifox / "apis" / "login.yaml").write_text(
@@ -75,7 +75,7 @@ def _write_auth_chain_project(root, port):
         encoding="utf-8",
     )
     (apifox / "cases" / "login-success.yaml").write_text(
-        "kind: case\nid: auth.login.success\nname: login success\nspec:\n  apiRef: auth.login\n  envRef: qa\n  request:\n    form:\n      username: ${dataset.username}\n      password: ${dataset.password}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+        "kind: case\nid: auth.login.success\nname: login success\nspec:\n  apiRef: auth.login\n  envRef: qa\n  request:\n    form:\n      username: ${{username}}\n      password: ${{password}}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
         encoding="utf-8",
     )
     (apifox / "cases" / "get-info.yaml").write_text(
@@ -142,6 +142,84 @@ def test_suite_run_executes_flow_with_extracted_token_and_env_headers(tmp_path, 
             "auth.login.success",
             "auth.get-info.smoke",
         ]
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_case_send_uses_inline_case_data_without_external_dataset(tmp_path, capsys):
+    server = HTTPServer(("127.0.0.1", 0), AuthChainHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        apifox = tmp_path / "apifox"
+        for rel in ("envs", "apis", "cases"):
+            (apifox / rel).mkdir(parents=True, exist_ok=True)
+
+        (apifox / "project.yaml").write_text(
+            "kind: project\nid: default\nname: demo\nspec:\n  defaultEnv: qa\n",
+            encoding="utf-8",
+        )
+        (apifox / "envs" / "qa.yaml").write_text(
+            f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  variables: {{}}\n",
+            encoding="utf-8",
+        )
+        (apifox / "apis" / "login.yaml").write_text(
+            "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  contract:\n    request:\n      method: POST\n      path: /login\n      contentType: application/x-www-form-urlencoded\n      formSchema:\n        username:\n          type: string\n          required: true\n        password:\n          type: string\n          required: true\n    responses:\n      '200': {}\n",
+            encoding="utf-8",
+        )
+        (apifox / "cases" / "login.yaml").write_text(
+            "kind: case\nid: auth.login.inline\nname: inline login\nspec:\n  apiRef: auth.login\n  data:\n    username: alice\n    password: secret\n  request:\n    form:\n      username: ${{username}}\n      password: ${{password}}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+            encoding="utf-8",
+        )
+
+        exit_code = main(["case", "send", "auth.login.inline", "--project-root", str(tmp_path), "--json"])
+        assert exit_code == 0
+        summary = _read_summary(capsys)
+
+        assert summary["total"] == 1
+        assert summary["details"][0]["resource_id"] == "auth.login.inline"
+        assert summary["details"][0]["request"]["form"] == {"username": "alice", "password": "secret"}
+        assert summary["details"][0]["response"]["status_code"] == 200
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_api_send_json_failure_includes_request_and_response_details(tmp_path, capsys):
+    server = HTTPServer(("127.0.0.1", 0), AuthChainHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        apifox = tmp_path / "apifox"
+        for rel in ("envs", "apis"):
+            (apifox / rel).mkdir(parents=True, exist_ok=True)
+
+        (apifox / "project.yaml").write_text(
+            "kind: project\nid: default\nname: demo\nspec:\n  defaultEnv: qa\n",
+            encoding="utf-8",
+        )
+        (apifox / "envs" / "qa.yaml").write_text(
+            f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  headers: {{}}\n  variables: {{}}\n",
+            encoding="utf-8",
+        )
+        (apifox / "apis" / "get-info.yaml").write_text(
+            "kind: api\nid: auth.get-info\nname: get info\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: GET\n    path: /getInfo\n  expect:\n    status: 200\n    assertions: []\n  extract: []\n",
+            encoding="utf-8",
+        )
+
+        exit_code = main(["api", "send", "auth.get-info", "--project-root", str(tmp_path), "--json"])
+        assert exit_code == 1
+        summary = _read_summary(capsys)
+
+        assert summary["total"] == 1
+        assert summary["failed"] == 1
+        assert summary["details"][0]["request"]["method"] == "GET"
+        assert summary["details"][0]["request"]["url"].endswith("/getInfo")
+        assert summary["details"][0]["response"]["status_code"] == 401
+        assert summary["details"][0]["error"] == "status code assertion failed"
     finally:
         server.shutdown()
         thread.join()

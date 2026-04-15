@@ -4,16 +4,16 @@ from pytest_auto_api2.apifoxcli.planner import build_suite_plan
 from pytest_auto_api2.apifoxcli.resolver import resolve_value
 
 
-def test_resolve_value_uses_env_context_and_dataset():
+def test_resolve_value_uses_canonical_public_variable_syntax():
     context = RunContext(
         env={"baseUrl": "http://example.com", "variables": {"tenant": "qa"}},
         dataset={"username": "alice"},
     )
     context.values["token"] = "abc"
     payload = {
-        "tenant": "${env.tenant}",
-        "user": "${dataset.username}",
-        "auth": "Bearer ${context.token}",
+        "tenant": "${{tenant}}",
+        "user": "${{username}}",
+        "auth": "Bearer ${{token}}",
     }
     assert resolve_value(payload, context) == {
         "tenant": "qa",
@@ -37,7 +37,7 @@ def test_build_suite_plan_expands_dataset_rows(tmp_path):
         encoding="utf-8",
     )
     (apifox / "apis" / "login.yaml").write_text(
-        "kind: api\nid: user.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    json:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions: []\n",
+        "kind: api\nid: user.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    json:\n      username: ${{username}}\n  expect:\n    status: 200\n    assertions: []\n",
         encoding="utf-8",
     )
     (apifox / "datasets" / "users.yaml").write_text(
@@ -72,7 +72,7 @@ def test_build_suite_plan_expands_flow_steps_with_shared_context(tmp_path):
         encoding="utf-8",
     )
     (apifox / "apis" / "login.yaml").write_text(
-        "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    form:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions: []\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+        "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    form:\n      username: ${{username}}\n  expect:\n    status: 200\n    assertions: []\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
         encoding="utf-8",
     )
     (apifox / "apis" / "profile.yaml").write_text(

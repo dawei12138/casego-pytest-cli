@@ -5,7 +5,7 @@ from pytest_auto_api2.apifoxcli.validator import validate_project
 
 def test_project_init_creates_sources_and_cases_layout(tmp_path):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     assert (root / "apifox" / "sources").exists()
     assert (root / "apifox" / "cases").exists()
 

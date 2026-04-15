@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import re
 from typing import List
 
 from .models import LoadedProject
-from .resolver import iter_expression_tokens
+from .resolver import iter_expression_tokens, iter_legacy_expression_tokens
 
-SUPPORTED_PREFIXES = ("env.", "context.", "dataset.", "fn.")
+
+RAW_PATH_TEMPLATE_RE = re.compile(r"(?<!\$)\{([^{}]+)\}(?!\})")
 
 
 def _validate_supported_expressions(owner: str, value, errors: List[str]) -> None:
     for token in iter_expression_tokens(value):
-        if not token.startswith(SUPPORTED_PREFIXES):
+        if "." in token:
             errors.append(f"{owner} unsupported expression: {token}")
+    for token in iter_legacy_expression_tokens(value):
+        if token:
+            errors.append(f"{owner} unsupported expression: {token}")
+
+
+def _validate_public_request_path(owner: str, path: object, errors: List[str]) -> None:
+    if not isinstance(path, str):
+        return
+    match = RAW_PATH_TEMPLATE_RE.search(path)
+    if match:
+        errors.append(f"{owner} raw path template not allowed in request snapshot: {match.group(0)}")
 
 def validate_project(project: LoadedProject) -> List[str]:
     errors: List[str] = []
@@ -28,13 +41,18 @@ def validate_project(project: LoadedProject) -> List[str]:
             errors.append(f"api {api.id} envRef not found: {env_ref}")
 
         if api.spec.request:
+            _validate_public_request_path(f"api {api.id}", api.spec.request.path, errors)
             for _, field_value in (
+                ("path", api.spec.request.path),
                 ("headers", api.spec.request.headers),
                 ("query", api.spec.request.query),
                 ("json", api.spec.request.json_body),
                 ("form", api.spec.request.form),
             ):
                 _validate_supported_expressions(f"api {api.id}", field_value, errors)
+
+        request_contract = ((api.spec.contract or {}).get("request") or {})
+        _validate_supported_expressions(f"api {api.id}", request_contract.get("path"), errors)
 
     for case in project.cases.values():
         if case.spec.apiRef not in project.apis:

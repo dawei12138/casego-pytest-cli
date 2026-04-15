@@ -169,3 +169,60 @@ def test_apply_source_sync_prune_ratio_guard_blocks_even_when_count_guard_allows
 
     assert "maxRemoveRatio" in str(exc_info.value)
     assert stale_path.exists()
+
+
+def test_sync_impact_marks_case_when_path_change_adds_required_param(tmp_path):
+    apifox = tmp_path / "apifox"
+    for rel in ("sources", "envs", "apis", "cases"):
+        (apifox / rel).mkdir(parents=True, exist_ok=True)
+
+    (apifox / "project.yaml").write_text(
+        "kind: project\nid: default\nname: demo\nspec:\n  defaultEnv: qa\n",
+        encoding="utf-8",
+    )
+    (apifox / "sources" / "demo-openapi.yaml").write_text(
+        "kind: source\nid: demo-openapi\nname: demo\nspec:\n  type: openapi\n  url: https://demo.example/openapi.json\n  syncMode: full\n  includePaths: []\n  excludePaths: []\n  tagMap:\n    AuthTag: auth\n  guards:\n    maxRemoveCount: 20\n    maxRemoveRatio: 0.2\n",
+        encoding="utf-8",
+    )
+    (apifox / "envs" / "qa.yaml").write_text(
+        "kind: env\nid: qa\nname: QA\nspec:\n  baseUrl: https://demo.example/dev-api\n  headers: {}\n  variables: {}\n",
+        encoding="utf-8",
+    )
+    (apifox / "apis" / "auth-get-user.yaml").write_text(
+        "kind: api\nid: auth.get.user.by-id\nname: Get User\nmeta:\n  module: auth\n  sync:\n    sourceId: demo-openapi\n    syncKey: get_user_by_id\n    lifecycle: active\nspec:\n  protocol: http\n  contract:\n    request:\n      method: GET\n      path: /user/{id}\n      contentType: application/json\n    responses:\n      '200': {}\n",
+        encoding="utf-8",
+    )
+    (apifox / "cases" / "user-smoke.yaml").write_text(
+        "kind: case\nid: auth.user.smoke\nname: user smoke\nmeta:\n  audit:\n    status: healthy\n    reasons: []\nspec:\n  apiRef: auth.get.user.by-id\n  request: {}\n  expect:\n    status: 200\n    assertions: []\n  extract: []\n",
+        encoding="utf-8",
+    )
+
+    project = load_project(tmp_path)
+    document = {
+        "openapi": "3.0.3",
+        "paths": {
+            "/org/{orgId}/user/{id}": {
+                "get": {
+                    "operationId": "get_user_by_id",
+                    "summary": "Get User",
+                    "tags": ["AuthTag"],
+                    "parameters": [
+                        {"name": "orgId", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], document)
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+    impact = analyze_sync_impact(project, plan)
+
+    assert impact.cases == [
+        {
+            "caseId": "auth.user.smoke",
+            "reasons": [{"type": "missing_required_input", "field": "orgId"}],
+        }
+    ]

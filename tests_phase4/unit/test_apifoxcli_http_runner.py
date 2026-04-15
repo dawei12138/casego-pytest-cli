@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from pytest_auto_api2.apifoxcli.assertions import assert_response
 from pytest_auto_api2.apifoxcli.context import RunContext
 from pytest_auto_api2.apifoxcli.extractor import apply_extractors
@@ -51,9 +53,9 @@ def test_execute_http_api_builds_request(monkeypatch):
         spec=ApiSpec(
             request=RequestSpec(
                 method="POST",
-                path="/login",
-                headers={"X-Tenant": "${env.tenant}"},
-                json={"username": "${dataset.username}"},
+                path="/users/${{userId}}/login",
+                headers={"X-Tenant": "${{tenant}}"},
+                json={"username": "${{username}}"},
             ),
             expect=ExpectSpec(status=200, assertions=[]),
             extract=[],
@@ -61,15 +63,55 @@ def test_execute_http_api_builds_request(monkeypatch):
     )
     context = RunContext(
         env={"baseUrl": "http://example.com", "variables": {"tenant": "qa"}},
-        dataset={"username": "alice"},
+        dataset={"username": "alice", "userId": "42"},
     )
     response = execute_http_api(api, context)
 
     assert captured["method"] == "POST"
-    assert captured["url"] == "http://example.com/login"
+    assert captured["url"] == "http://example.com/users/42/login"
     assert captured["headers"]["X-Tenant"] == "qa"
     assert captured["json"]["username"] == "alice"
     assert response.status_code == 200
+
+
+def test_execute_http_api_raises_when_path_placeholder_is_missing():
+    api = ApiResource(
+        kind="api",
+        id="user.detail",
+        name="User Detail",
+        spec=ApiSpec(
+            request=RequestSpec(
+                method="GET",
+                path="/users/${{userId}}",
+            ),
+            expect=ExpectSpec(status=200, assertions=[]),
+            extract=[],
+        ),
+    )
+    context = RunContext(env={"baseUrl": "http://example.com", "variables": {}}, dataset={})
+
+    with pytest.raises(KeyError, match="userId"):
+        execute_http_api(api, context)
+
+
+def test_execute_http_api_rejects_raw_public_request_path_template():
+    api = ApiResource(
+        kind="api",
+        id="user.detail",
+        name="User Detail",
+        spec=ApiSpec(
+            request=RequestSpec(
+                method="GET",
+                path="/users/{userId}",
+            ),
+            expect=ExpectSpec(status=200, assertions=[]),
+            extract=[],
+        ),
+    )
+    context = RunContext(env={"baseUrl": "http://example.com", "variables": {}}, dataset={"userId": "42"})
+
+    with pytest.raises(ValueError, match="raw path template"):
+        execute_http_api(api, context)
 
 
 def test_apply_extractors_writes_context_values():

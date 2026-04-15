@@ -8,6 +8,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 import yaml
 
+from .resource_store import env_file, source_file, validate_storage_id
+
 
 HTTP_METHODS = ("get", "post", "put", "delete", "patch", "options", "head")
 _OMIT = object()
@@ -72,7 +74,7 @@ def iter_openapi_operations(
             method_name = str(method).lower()
             if method_name not in HTTP_METHODS:
                 continue
-            yield path, method_name, operation or {}
+            yield path, method_name, _merge_path_item_parameters(path_item, operation or {})
 
 
 def build_openapi_sync_key(method: str, path: str, operation: Dict[str, Any]) -> str:
@@ -154,6 +156,39 @@ def path_segments(path: str) -> List[str]:
     return parts
 
 
+def _placeholder(name: str) -> str:
+    return f"${{{{{name}}}}}"
+
+
+def _merge_path_item_parameters(path_item: Dict[str, Any], operation: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(operation or {})
+    path_parameters = path_item.get("parameters") or []
+    operation_parameters = operation.get("parameters") or []
+    parameters_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    for parameter in path_parameters:
+        if not isinstance(parameter, dict):
+            continue
+        name = parameter.get("name")
+        location = parameter.get("in")
+        if not isinstance(name, str) or not isinstance(location, str):
+            continue
+        parameters_by_key[(location, name)] = parameter
+
+    for parameter in operation_parameters:
+        if not isinstance(parameter, dict):
+            continue
+        name = parameter.get("name")
+        location = parameter.get("in")
+        if not isinstance(name, str) or not isinstance(location, str):
+            continue
+        parameters_by_key[(location, name)] = parameter
+
+    if parameters_by_key:
+        merged["parameters"] = list(parameters_by_key.values())
+    return merged
+
+
 def import_openapi_project(
     root: Path,
     source: str,
@@ -167,8 +202,9 @@ def import_openapi_project(
     document = load_openapi_document(source, root=project_root)
     selected_server = select_openapi_server(document, server_description, server_url)
     base_url = resolve_openapi_base_url(selected_server.get("url", ""), source)
+    env_path = env_file(project_root, env_id)
 
-    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(document))
+    _write_env(env_path, env_id, base_url, has_openapi_bearer_security(document))
 
     imported = 0
     for path, method, operation in iter_openapi_operations(document, include_paths=include_paths):
@@ -209,10 +245,12 @@ def bootstrap_openapi_source(
     resolved_server_url = str(selected_server.get("url") or "")
     resolved_server_description = str(selected_server.get("description") or "") or None
     base_url = resolve_openapi_base_url(resolved_server_url, normalized_source)
+    env_path = env_file(project_root, env_id)
+    source_path = source_file(project_root, source_id)
 
-    _write_env(apifox / "envs" / f"{env_id}.yaml", env_id, base_url, has_openapi_bearer_security(loaded_document))
+    _write_env(env_path, env_id, base_url, has_openapi_bearer_security(loaded_document))
     _write_source(
-        apifox / "sources" / f"{source_id}.yaml",
+        source_path,
         source_id=source_id,
         source=normalized_source,
         server_description=resolved_server_description,
@@ -337,7 +375,7 @@ def _write_env(path: Path, env_id: str, base_url: str, add_bearer_header: bool) 
     spec.setdefault("headers", {})
     spec.setdefault("variables", {})
     if add_bearer_header:
-        spec["headers"].setdefault("Authorization", "Bearer ${context.token}")
+        spec["headers"].setdefault("Authorization", f"Bearer {_placeholder('token')}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -389,7 +427,7 @@ def _infer_module_name(tag: str, path: str, method: str, operation: Dict[str, An
 
 
 def _resource_file_path(root: Path, resource_id: str) -> Path:
-    parts = resource_id.split(".")
+    parts = validate_storage_id(resource_id, label="resource id").split(".")
     return root.joinpath(*parts).with_suffix(".yaml")
 
 
@@ -454,7 +492,7 @@ def _build_request_path(path: str, parameters: Iterable[Dict[str, Any]]) -> str:
         if param.get("in") != "path":
             continue
         name = param["name"]
-        request_path = request_path.replace(f"{{{name}}}", f"${{dataset.{name}}}")
+        request_path = request_path.replace(f"{{{name}}}", _placeholder(name))
     return request_path
 
 
@@ -486,7 +524,7 @@ def _parameter_value(parameter: Dict[str, Any]) -> Any:
     if default is not _OMIT:
         return default
     if parameter.get("required"):
-        return f"${{dataset.{parameter['name']}}}"
+        return _placeholder(str(parameter["name"]))
     return _OMIT
 
 
@@ -573,7 +611,7 @@ def _schema_property_value(name: str, schema: Dict[str, Any], required: bool) ->
             return [item_default]
         return [] if required else _OMIT
     if required:
-        return f"${{dataset.{name}}}"
+        return _placeholder(name)
     return _OMIT
 
 

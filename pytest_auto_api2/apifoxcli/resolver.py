@@ -5,20 +5,16 @@ from typing import Any, Iterable
 
 from .context import RunContext
 
-TOKEN_RE = re.compile(r"\$\{([^}]+)\}")
+TOKEN_RE = re.compile(r"\$\{\{([^{}]+)\}\}")
+LEGACY_TOKEN_RE = re.compile(r"\$\{(?!\{)([^{}]+)\}")
 
 
 def _resolve_token(token: str, context: RunContext) -> Any:
-    if token.startswith("env."):
-        key = token.split(".", 1)[1]
-        return context.env.get("variables", {}).get(key, context.env.get(key))
-    if token.startswith("dataset."):
-        key = token.split(".", 1)[1]
-        return context.dataset.get(key)
-    if token.startswith("context."):
-        key = token.split(".", 1)[1]
-        return context.values.get(key)
-    raise KeyError(f"unsupported token: {token}")
+    if token in context.values:
+        return context.values[token]
+    if token in context.dataset:
+        return context.dataset[token]
+    return context.env.get("variables", {}).get(token)
 
 
 def resolve_value(value: Any, context: RunContext, missing: str = "empty") -> Any:
@@ -38,6 +34,8 @@ def resolve_value(value: Any, context: RunContext, missing: str = "empty") -> An
         had_token = True
         resolved = _resolve_token(token, context)
         if resolved is None:
+            if missing == "error":
+                raise KeyError(f"missing token: {token}")
             had_missing_token = True
             return ""
         return str(resolved)
@@ -59,3 +57,16 @@ def iter_expression_tokens(value: Any) -> Iterable[str]:
     if isinstance(value, list):
         for item in value:
             yield from iter_expression_tokens(item)
+
+
+def iter_legacy_expression_tokens(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield from LEGACY_TOKEN_RE.findall(value)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from iter_legacy_expression_tokens(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_legacy_expression_tokens(item)

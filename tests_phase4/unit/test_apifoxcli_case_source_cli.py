@@ -67,12 +67,15 @@ spec:
 def test_build_parser_supports_case_and_source_commands():
     parser = build_parser()
     case_args = parser.parse_args(["case", "run", "auth.login.success", "--env", "qa", "--dataset", "auth.users"])
+    case_send_args = parser.parse_args(["case", "send", "auth.login.success", "--env", "qa"])
     sync_args = parser.parse_args(["source", "sync", "demo-openapi", "--apply"])
     status_args = parser.parse_args(["source", "status", "demo-openapi"])
     rebind_args = parser.parse_args(["source", "rebind", "demo-openapi", "--api-id", "auth.post.login", "--sync-key", "login_post"])
 
     assert case_args.resource == "case"
     assert case_args.action == "run"
+    assert case_send_args.resource == "case"
+    assert case_send_args.action == "send"
     assert sync_args.resource == "source"
     assert sync_args.action == "sync"
     assert sync_args.apply is True
@@ -88,7 +91,7 @@ def test_build_parser_rejects_source_sync_apply_and_plan_together():
 
 def test_source_rebind_persists_source_spec_rebinds(tmp_path):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     _write_source(root)
 
     exit_code = main(
@@ -112,7 +115,7 @@ def test_source_rebind_persists_source_spec_rebinds(tmp_path):
 
 def test_source_status_returns_non_zero_with_clear_error_when_report_missing(tmp_path, capsys):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     _write_source(root)
 
     exit_code = main(["source", "status", "demo-openapi", "--project-root", str(root)])
@@ -124,7 +127,7 @@ def test_source_status_returns_non_zero_with_clear_error_when_report_missing(tmp
 
 def test_source_sync_failure_surfaces_exception_text(tmp_path, capsys):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     _write_source(root, source_url=str(tmp_path / "missing-openapi.json"))
 
     exit_code = main(["source", "sync", "demo-openapi", "--project-root", str(root)])
@@ -136,7 +139,7 @@ def test_source_sync_failure_surfaces_exception_text(tmp_path, capsys):
 
 def test_source_status_failure_with_json_emits_structured_error(tmp_path, capsys):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     _write_source(root)
 
     exit_code = main(["source", "status", "demo-openapi", "--project-root", str(root), "--json"])
@@ -151,7 +154,7 @@ def test_source_status_failure_with_json_emits_structured_error(tmp_path, capsys
 
 def test_source_sync_default_mode_is_plan_only_without_report_write(tmp_path):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(
         json.dumps(
@@ -181,7 +184,7 @@ def test_source_sync_default_mode_is_plan_only_without_report_write(tmp_path):
 
 def test_source_sync_plan_flag_is_plan_only_without_report_write(tmp_path):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(
         json.dumps(
@@ -211,7 +214,7 @@ def test_source_sync_plan_flag_is_plan_only_without_report_write(tmp_path):
 
 def test_source_sync_prune_requires_apply(tmp_path, capsys):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(
         json.dumps({"openapi": "3.0.3", "paths": {}}),
@@ -228,7 +231,7 @@ def test_source_sync_prune_requires_apply(tmp_path, capsys):
 
 def test_source_sync_apply_prune_removes_unreferenced_upstream_removed_api(tmp_path):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}), encoding="utf-8")
     _write_source(root, source_url=str(source_path), max_remove_count=20, max_remove_ratio=1.0)
@@ -246,7 +249,7 @@ def test_source_sync_apply_prune_removes_unreferenced_upstream_removed_api(tmp_p
 
 def test_source_sync_apply_prune_fails_when_prune_guards_block(tmp_path, capsys):
     root = tmp_path / "demo"
-    assert main(["project", "init", "--project-root", str(root)]) == 0
+    assert main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}), encoding="utf-8")
     _write_source(root, source_url=str(source_path), max_remove_count=0, max_remove_ratio=0.0)
@@ -265,7 +268,7 @@ def test_project_import_openapi_loads_document_once(tmp_path, monkeypatch):
     from pytest_auto_api2.apifoxcli import cli as cli_module
 
     root = tmp_path / "demo"
-    assert cli_module.main(["project", "init", "--project-root", str(root)]) == 0
+    assert cli_module.main(["project", "init", "--project-root", str(root), "--name", "demo-api"]) == 0
     source_path = tmp_path / "openapi.json"
     source_path.write_text(
         json.dumps(

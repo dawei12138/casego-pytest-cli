@@ -119,6 +119,118 @@ def test_apply_source_sync_writes_created_updated_removed_and_report_without_tou
     assert report_yaml["summary"]["upstreamRemovedApis"] == report.summary["upstreamRemovedApis"] == 1
 
 
+def test_apply_source_sync_writes_request_snapshot_with_canonical_path_placeholders(tmp_path):
+    apifox = tmp_path / "apifox"
+    _create_base_project(apifox)
+
+    project = load_project(tmp_path)
+    document = {
+        "openapi": "3.0.3",
+        "paths": {
+            "/user/{userId}": {
+                "get": {
+                    "operationId": "get_user_by_id",
+                    "summary": "Get User By Id",
+                    "tags": ["AuthTag"],
+                    "parameters": [
+                        {
+                            "name": "userId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], document)
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+    apply_source_sync(project, "demo-openapi", plan)
+
+    created_yaml, _ = _find_api_payload(apifox / "apis" / "auth", "auth.get.user.by-user-id")
+    assert created_yaml["spec"]["contract"]["request"]["path"] == "/user/{userId}"
+    assert created_yaml["spec"]["request"]["path"] == "/user/${{userId}}"
+
+
+def test_apply_source_sync_refreshes_generated_request_snapshot_for_updated_api(tmp_path):
+    apifox = tmp_path / "apifox"
+    _create_base_project(apifox)
+    _write_text(
+        apifox / "apis" / "auth" / "get-user.yaml",
+        "kind: api\nid: auth.get.user.by-user-id\nname: get user\nmeta:\n  module: auth\n  sync:\n    sourceId: demo-openapi\n    syncKey: get_user_by_id\n    lifecycle: active\nspec:\n  protocol: http\n  contract:\n    request:\n      method: GET\n      path: /user/{userId}\n      contentType: application/json\n    responses:\n      '200': {}\n  request:\n    method: GET\n    path: /user/${dataset.userId}\n    headers:\n      Content-Type: application/json\n",
+    )
+
+    project = load_project(tmp_path)
+    document = {
+        "openapi": "3.0.3",
+        "paths": {
+            "/org/{orgId}/user/{userId}": {
+                "get": {
+                    "operationId": "get_user_by_id",
+                    "summary": "Get User By Id",
+                    "tags": ["AuthTag"],
+                    "parameters": [
+                        {"name": "orgId", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "userId", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], document)
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+    apply_source_sync(project, "demo-openapi", plan)
+
+    updated_yaml, _ = _find_api_payload(apifox / "apis" / "auth", "auth.get.user.by-user-id")
+    assert updated_yaml["spec"]["contract"]["request"]["path"] == "/org/{orgId}/user/{userId}"
+    assert updated_yaml["spec"]["request"]["path"] == "/org/${{orgId}}/user/${{userId}}"
+
+
+def test_apply_source_sync_preserves_user_custom_request_snapshot_for_updated_api(tmp_path):
+    apifox = tmp_path / "apifox"
+    _create_base_project(apifox)
+    _write_text(
+        apifox / "apis" / "auth" / "get-user.yaml",
+        "kind: api\nid: auth.get.user.by-user-id\nname: get user\nmeta:\n  module: auth\n  sync:\n    sourceId: demo-openapi\n    syncKey: get_user_by_id\n    lifecycle: active\nspec:\n  protocol: http\n  contract:\n    request:\n      method: GET\n      path: /user/{userId}\n      contentType: application/json\n    responses:\n      '200': {}\n  request:\n    method: GET\n    path: /me/profile\n    headers:\n      X-Debug: keep-me\n",
+    )
+
+    project = load_project(tmp_path)
+    document = {
+        "openapi": "3.0.3",
+        "paths": {
+            "/org/{orgId}/user/{userId}": {
+                "get": {
+                    "operationId": "get_user_by_id",
+                    "summary": "Get User By Id",
+                    "tags": ["AuthTag"],
+                    "parameters": [
+                        {"name": "orgId", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {"name": "userId", "in": "path", "required": True, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(project.sources["demo-openapi"], document)
+    plan = plan_source_sync(project, "demo-openapi", normalized)
+    apply_source_sync(project, "demo-openapi", plan)
+
+    updated_yaml, _ = _find_api_payload(apifox / "apis" / "auth", "auth.get.user.by-user-id")
+    assert updated_yaml["spec"]["contract"]["request"]["path"] == "/org/{orgId}/user/{userId}"
+    assert updated_yaml["spec"]["request"] == {
+        "method": "GET",
+        "path": "/me/profile",
+        "headers": {"X-Debug": "keep-me"},
+    }
+
+
 def test_apply_source_sync_legacy_user_file_does_not_get_overwritten_by_get_post_user(tmp_path):
     apifox = tmp_path / "apifox"
     _create_base_project(apifox)

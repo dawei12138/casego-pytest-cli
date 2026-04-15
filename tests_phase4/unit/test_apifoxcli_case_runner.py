@@ -49,7 +49,7 @@ def test_build_case_request_merges_env_headers_and_case_form():
             "name": "login success",
             "spec": {
                 "apiRef": "auth.login",
-                "request": {"form": {"username": "${dataset.username}", "password": "123456"}},
+                "request": {"form": {"username": "${{username}}", "password": "123456"}},
                 "expect": {"status": 200, "assertions": []},
                 "extract": [],
             },
@@ -58,7 +58,7 @@ def test_build_case_request_merges_env_headers_and_case_form():
     context = RunContext(
         env={
             "baseUrl": "https://demo.example/dev-api",
-            "headers": {"Authorization": "Bearer ${context.token}"},
+            "headers": {"Authorization": "Bearer ${{token}}"},
             "variables": {},
         },
         dataset={"username": "guest"},
@@ -70,6 +70,96 @@ def test_build_case_request_merges_env_headers_and_case_form():
     assert prepared.path == "/login"
     assert prepared.headers["Authorization"] == "Bearer abc"
     assert prepared.form == {"username": "guest", "password": "123456"}
+
+
+def test_build_case_request_prefers_request_snapshot_path_and_resolves_placeholders():
+    api = ApiResource.model_validate(
+        {
+            "kind": "api",
+            "id": "auth.profile",
+            "name": "profile",
+            "spec": {
+                "protocol": "http",
+                "request": {
+                    "method": "GET",
+                    "path": "/users/${{userId}}/profile",
+                },
+                "contract": {
+                    "request": {
+                        "method": "GET",
+                        "path": "/users/{userId}/profile",
+                    },
+                    "responses": {"200": {}},
+                },
+            },
+        }
+    )
+    case = CaseResource.model_validate(
+        {
+            "kind": "case",
+            "id": "auth.profile.smoke",
+            "name": "profile smoke",
+            "spec": {
+                "apiRef": "auth.profile",
+                "request": {},
+                "expect": {"status": 200, "assertions": []},
+                "extract": [],
+            },
+        }
+    )
+    context = RunContext(
+        env={"baseUrl": "https://demo.example/dev-api", "headers": {}, "variables": {}},
+        dataset={"userId": "42"},
+    )
+
+    prepared = build_case_request(case, api, context)
+
+    assert prepared.method == "GET"
+    assert prepared.path == "/users/42/profile"
+
+
+def test_build_case_request_raises_when_path_placeholder_is_missing():
+    api = ApiResource.model_validate(
+        {
+            "kind": "api",
+            "id": "auth.profile",
+            "name": "profile",
+            "spec": {
+                "protocol": "http",
+                "request": {
+                    "method": "GET",
+                    "path": "/users/${{userId}}/profile",
+                },
+                "contract": {
+                    "request": {
+                        "method": "GET",
+                        "path": "/users/{userId}/profile",
+                    },
+                    "responses": {"200": {}},
+                },
+            },
+        }
+    )
+    case = CaseResource.model_validate(
+        {
+            "kind": "case",
+            "id": "auth.profile.smoke",
+            "name": "profile smoke",
+            "spec": {
+                "apiRef": "auth.profile",
+                "request": {},
+                "expect": {"status": 200, "assertions": []},
+                "extract": [],
+            },
+        }
+    )
+    context = RunContext(
+        env={"baseUrl": "https://demo.example/dev-api", "headers": {}, "variables": {}},
+        dataset={},
+    )
+
+    with pytest.raises(KeyError, match="userId"):
+        build_case_request(case, api, context)
 
 
 @pytest.mark.parametrize(
@@ -204,13 +294,13 @@ def test_execute_http_api_supports_prepared_request_payload(monkeypatch):
 
     context = RunContext(
         env={"baseUrl": "https://demo.example/dev-api", "headers": {}, "variables": {}},
-        dataset={},
+        dataset={"userId": "42"},
         values={"token": "abc"},
     )
     request_data = PreparedRequest(
         method="POST",
-        path="/login",
-        headers={"Authorization": "Bearer ${context.token}"},
+        path="/users/${{userId}}/login",
+        headers={"Authorization": "Bearer ${{token}}"},
         query={"tenant": "qa"},
         json_body={"username": "guest"},
         form={"password": "123456"},
@@ -220,7 +310,7 @@ def test_execute_http_api_supports_prepared_request_payload(monkeypatch):
 
     assert captured == {
         "method": "POST",
-        "url": "https://demo.example/dev-api/login",
+        "url": "https://demo.example/dev-api/users/42/login",
         "headers": {"Authorization": "Bearer abc"},
         "params": {"tenant": "qa"},
         "json": {"username": "guest"},

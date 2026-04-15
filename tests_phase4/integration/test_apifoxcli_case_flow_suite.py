@@ -55,7 +55,7 @@ def test_case_flow_and_suite_run_use_case_refs(tmp_path, capsys):
             encoding="utf-8",
         )
         (apifox / "envs" / "qa.yaml").write_text(
-            f"kind: env\nid: qa\nname: QA\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  headers:\n    Authorization: Bearer ${{context.token}}\n  variables: {{}}\n",
+            f"kind: env\nid: qa\nname: QA\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  headers:\n    Authorization: Bearer ${{{{token}}}}\n  variables: {{}}\n",
             encoding="utf-8",
         )
         (apifox / "apis" / "auth-login.yaml").write_text(
@@ -67,7 +67,7 @@ def test_case_flow_and_suite_run_use_case_refs(tmp_path, capsys):
             encoding="utf-8",
         )
         (apifox / "cases" / "login-success.yaml").write_text(
-            "kind: case\nid: auth.login.success\nname: login success\nspec:\n  apiRef: auth.login\n  request:\n    form:\n      username: ${dataset.username}\n      password: ${dataset.password}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+            "kind: case\nid: auth.login.success\nname: login success\nspec:\n  apiRef: auth.login\n  request:\n    form:\n      username: ${{username}}\n      password: ${{password}}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
             encoding="utf-8",
         )
         (apifox / "cases" / "get-info.yaml").write_text(
@@ -314,11 +314,11 @@ def test_flow_and_suite_support_legacy_api_refs(tmp_path, capsys):
             encoding="utf-8",
         )
         (apifox / "envs" / "qa.yaml").write_text(
-            f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  headers:\n    Authorization: Bearer ${{context.token}}\n  variables: {{}}\n",
+            f"kind: env\nid: qa\nname: qa\nspec:\n  baseUrl: http://127.0.0.1:{server.server_port}\n  headers:\n    Authorization: Bearer ${{{{token}}}}\n  variables: {{}}\n",
             encoding="utf-8",
         )
         (apifox / "apis" / "login.yaml").write_text(
-            "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    headers:\n      Content-Type: application/json\n    json:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
+            "kind: api\nid: auth.login\nname: login\nspec:\n  protocol: http\n  envRef: qa\n  request:\n    method: POST\n    path: /login\n    headers:\n      Content-Type: application/json\n    json:\n      username: ${{username}}\n  expect:\n    status: 200\n    assertions:\n      - id: login-code\n        source: response\n        expr: $.code\n        op: ==\n        value: 200\n  extract:\n    - name: token\n      from: response\n      expr: $.token\n",
             encoding="utf-8",
         )
         (apifox / "apis" / "get-info.yaml").write_text(

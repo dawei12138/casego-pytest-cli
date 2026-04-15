@@ -78,6 +78,7 @@ class CaseSpec(BaseModel):
     apiRef: str
     envRef: Optional[str] = None
     datasetRef: Optional[str] = None
+    data: Dict[str, object] = Field(default_factory=dict)
     request: Dict[str, object] = Field(default_factory=dict)
     expect: Dict[str, object] = Field(default_factory=dict)
     extract: List[Dict[str, object]] = Field(default_factory=list)

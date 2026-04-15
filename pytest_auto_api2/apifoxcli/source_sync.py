@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
@@ -17,7 +18,12 @@ from .openapi_importer import (
     path_segments,
     slug_segment,
 )
+from .resource_store import source_file, validate_storage_id
 from .sync_report import SyncReport, build_sync_report, write_sync_report
+
+
+PATH_PARAM_RE = re.compile(r"(?<!\$)\{([^{}]+)\}(?!\})")
+LEGACY_PUBLIC_TOKEN_RE = re.compile(r"\$\{(?:context|dataset|env)\.([^{}]+)\}")
 
 
 @dataclass
@@ -151,8 +157,9 @@ def apply_source_sync(
 
 
 def read_latest_sync_report(root: Path, source_id: str) -> Dict[str, Any]:
+    validated_source_id = validate_storage_id(source_id, label="source id")
     report_root = Path(root) / "apifox" / "reports" / "sync"
-    matches = sorted(report_root.glob(f"{source_id}-*.yaml"))
+    matches = sorted(report_root.glob(f"{validated_source_id}-*.yaml"))
     if not matches:
         raise FileNotFoundError(f"no sync report found for source '{source_id}'")
 
@@ -163,7 +170,7 @@ def read_latest_sync_report(root: Path, source_id: str) -> Dict[str, Any]:
 
 
 def upsert_source_rebind(root: Path, source_id: str, api_id: str, sync_key: str) -> Path:
-    source_path = Path(root) / "apifox" / "sources" / f"{source_id}.yaml"
+    source_path = source_file(root, source_id)
     if not source_path.exists():
         raise FileNotFoundError(f"source not found: {source_id}")
 
@@ -483,9 +490,16 @@ def render_api_resource(project: LoadedProject, source_id: str, item: SyncCandid
     spec["contract"] = deepcopy(item.contract)
     if not spec.get("envRef"):
         spec["envRef"] = project.project.spec.defaultEnv
-    if not spec.get("request"):
-        request_payload = _request_spec_from_contract(item.contract)
-        if request_payload:
+    request_payload = _request_spec_from_contract(item.contract)
+    if request_payload:
+        existing_request = spec.get("request")
+        previous_generated_request = (
+            _request_spec_from_contract(existing.spec.contract or {}) if existing is not None else None
+        )
+        if (
+            existing_request is None
+            or _request_snapshot_matches_generated(existing_request, previous_generated_request)
+        ):
             spec["request"] = request_payload
     if not spec.get("expect"):
         spec["expect"] = {"status": 200, "assertions": []}
@@ -706,6 +720,7 @@ def diff_api_contract(local_contract: Dict[str, object], upstream_contract: Dict
     diffs.extend(_diff_required_fields(local_request.get("formSchema"), upstream_request.get("formSchema")))
     diffs.extend(_diff_required_fields(local_request.get("jsonSchema"), upstream_request.get("jsonSchema")))
     diffs.extend(_diff_required_fields(local_request.get("querySchema"), upstream_request.get("querySchema")))
+    diffs.extend(_diff_required_path_params(local_request.get("path"), upstream_request.get("path")))
     return diffs
 
 
@@ -728,6 +743,23 @@ def _required_fields(schema: object) -> set[str]:
         for field_name, field_spec in schema.items()
         if isinstance(field_spec, dict) and bool(field_spec.get("required"))
     }
+
+
+def _diff_required_path_params(local_path: object, upstream_path: object) -> List[SyncDiff]:
+    local_required = _path_params(local_path)
+    upstream_required = _path_params(upstream_path)
+    diffs: List[SyncDiff] = []
+    for field_name in sorted(upstream_required - local_required):
+        diffs.append(SyncDiff(kind="request.requiredAdded", field=field_name, breaking=True))
+    for field_name in sorted(local_required - upstream_required):
+        diffs.append(SyncDiff(kind="request.requiredRemoved", field=field_name, breaking=False))
+    return diffs
+
+
+def _path_params(path: object) -> Set[str]:
+    if not isinstance(path, str):
+        return set()
+    return set(PATH_PARAM_RE.findall(path))
 
 
 def _api_method_path(api: ApiResource) -> Optional[Tuple[str, str]]:
@@ -868,7 +900,7 @@ def _request_spec_from_contract(contract: Dict[str, object]) -> Optional[Dict[st
     if not method or not path:
         return None
 
-    payload: Dict[str, object] = {"method": method, "path": path}
+    payload: Dict[str, object] = {"method": method, "path": _request_path_snapshot(path)}
     content_type = request.get("contentType")
     if isinstance(content_type, str) and content_type:
         payload["headers"] = {"Content-Type": content_type}
@@ -894,5 +926,35 @@ def _payload_from_contract_schema(schema: object) -> Dict[str, object]:
             payload[field_name] = field_schema["default"]
             continue
         if field_schema.get("required"):
-            payload[field_name] = f"${{dataset.{field_name}}}"
+            payload[field_name] = f"${{{{{field_name}}}}}"
     return payload
+
+
+def _request_path_snapshot(path: str) -> str:
+    return PATH_PARAM_RE.sub(lambda match: f"${{{{{match.group(1)}}}}}", path)
+
+
+def _request_snapshot_matches_generated(existing_request: object, generated_request: object) -> bool:
+    if not isinstance(existing_request, dict) or not isinstance(generated_request, dict):
+        return False
+    return _canonicalize_request_snapshot(existing_request) == _canonicalize_request_snapshot(generated_request)
+
+
+def _canonicalize_request_snapshot(value: object, *, path_value: bool = False) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _canonicalize_request_snapshot(item, path_value=(key == "path"))
+            for key, item in value.items()
+            if item not in (None, {}, [])
+        }
+    if isinstance(value, list):
+        return [_canonicalize_request_snapshot(item) for item in value]
+    if isinstance(value, str):
+        canonical = LEGACY_PUBLIC_TOKEN_RE.sub(
+            lambda match: f"${{{{{match.group(1)}}}}}",
+            value,
+        )
+        if path_value:
+            canonical = _request_path_snapshot(canonical)
+        return canonical
+    return value

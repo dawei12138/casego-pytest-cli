@@ -12,6 +12,12 @@ def _expand_dataset(project: LoadedProject, dataset_ref: Optional[str]) -> List[
     return list(project.datasets[dataset_ref].spec.rows) or [{}]
 
 
+def _merge_dataset(base: Optional[Dict[str, object]], override: Optional[Dict[str, object]]) -> Dict[str, object]:
+    merged: Dict[str, object] = dict(base or {})
+    merged.update(dict(override or {}))
+    return merged
+
+
 def _build_flow_nodes(
     project: LoadedProject,
     flow_id: str,
@@ -29,12 +35,13 @@ def _build_flow_nodes(
         if step.caseRef:
             if step.caseRef not in project.cases:
                 raise ValueError(f"flow {flow_id} step {step_index} caseRef not found: {step.caseRef}")
+            case = project.cases[step.caseRef]
             nodes.append(
                 PlanNode(
                     kind="case",
                     resource_id=step.caseRef,
                     env_id=env_id,
-                    dataset=dict(dataset),
+                    dataset=_merge_dataset(case.spec.data, dataset),
                     context_key=context_key,
                 )
             )
@@ -68,7 +75,7 @@ def build_case_plan(
                 kind="case",
                 resource_id=case_id,
                 env_id=env_id,
-                dataset=row,
+                dataset=_merge_dataset(case.spec.data, row),
                 context_key=f"case:{case_id}:{row_index}",
             )
             for row_index, row in enumerate(rows)
@@ -128,13 +135,14 @@ def build_suite_plan(project: LoadedProject, suite_id: str, env_override: Option
         if item.caseRef:
             if item.caseRef not in project.cases:
                 raise ValueError(f"suite {suite_id} item {item_index} caseRef not found: {item.caseRef}")
+            case = project.cases[item.caseRef]
             for row_index, row in enumerate(_expand_dataset(project, item.datasetRef)):
                 nodes.append(
                     PlanNode(
                         kind="case",
                         resource_id=item.caseRef,
                         env_id=env_id,
-                        dataset=row,
+                        dataset=_merge_dataset(case.spec.data, row),
                         context_key=f"suite:{suite_id}:item:{item_index}:row:{row_index}:case",
                     )
                 )

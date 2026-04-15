@@ -51,7 +51,7 @@ def test_suite_run_executes_canonical_yaml(tmp_path, capsys):
             encoding="utf-8",
         )
         (apifox / "cases" / "login.yaml").write_text(
-            "kind: case\nid: user.login.smoke\nname: login smoke\nspec:\n  apiRef: user.login\n  envRef: qa\n  request:\n    json:\n      username: ${dataset.username}\n  expect:\n    status: 200\n    assertions:\n      - id: errorCode\n        source: response\n        expr: $.errorCode\n        op: ==\n        value: 0\n      - id: username\n        source: response\n        expr: $.data.username\n        op: ==\n        value: alice\n  extract: []\n",
+            "kind: case\nid: user.login.smoke\nname: login smoke\nspec:\n  apiRef: user.login\n  envRef: qa\n  request:\n    json:\n      username: ${{username}}\n  expect:\n    status: 200\n    assertions:\n      - id: errorCode\n        source: response\n        expr: $.errorCode\n        op: ==\n        value: 0\n      - id: username\n        source: response\n        expr: $.data.username\n        op: ==\n        value: alice\n  extract: []\n",
             encoding="utf-8",
         )
         (apifox / "datasets" / "users.yaml").write_text(
